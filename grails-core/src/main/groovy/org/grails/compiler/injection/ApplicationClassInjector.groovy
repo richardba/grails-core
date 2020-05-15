@@ -34,13 +34,14 @@ import org.codehaus.groovy.ast.stmt.BlockStatement
 import org.codehaus.groovy.ast.stmt.ExpressionStatement
 import org.codehaus.groovy.ast.stmt.ReturnStatement
 import org.codehaus.groovy.ast.stmt.Statement
+import org.codehaus.groovy.ast.tools.GeneralUtils
 import org.codehaus.groovy.classgen.GeneratorContext
 import org.codehaus.groovy.control.SourceUnit
 import org.grails.core.artefact.ApplicationArtefactHandler
 import org.grails.io.support.GrailsResourceUtils
 import org.grails.io.support.UrlResource
 import org.springframework.util.ClassUtils
-
+import static org.codehaus.groovy.ast.tools.GeneralUtils.*
 import java.lang.reflect.Modifier
 /**
  * Injector for the 'Application' class
@@ -53,7 +54,7 @@ import java.lang.reflect.Modifier
 class ApplicationClassInjector implements GrailsArtefactClassInjector {
 
     public static final String EXCLUDE_MEMBER = "exclude"
-    public static final List<String> EXCLUDED_AUTO_CONFIGURE_CLASSES = ['org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration', 'org.springframework.boot.autoconfigure.MessageSourceAutoConfiguration', 'org.springframework.boot.autoconfigure.reactor.ReactorAutoConfiguration']
+    public static final List<String> EXCLUDED_AUTO_CONFIGURE_CLASSES = ['org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration', 'org.springframework.boot.autoconfigure.reactor.ReactorAutoConfiguration', 'org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration']
 
     ApplicationArtefactHandler applicationArtefactHandler = new ApplicationArtefactHandler()
 
@@ -86,8 +87,11 @@ class ApplicationClassInjector implements GrailsArtefactClassInjector {
                 def enableAgentMethodCall = new MethodCallExpression(new ClassExpression(ClassHelper.make(Support)), "enableAgentIfNotPresent", arguments)
                 def methodCallStatement = new ExpressionStatement(enableAgentMethodCall)
 
-                List<Statement> statements = [ methodCallStatement ]
-                classNode.addStaticInitializerStatements(statements, false)
+                List<Statement> statements = [
+                        stmt( callX(classX(System), "setProperty", args(  propX( classX(BuildSettings), "MAIN_CLASS_NAME"), constX(classNode.name) )) ),
+                        methodCallStatement
+                ]
+                classNode.addStaticInitializerStatements(statements, true)
 
                 def packageNamesMethod = classNode.getMethod('packageNames', GrailsASTUtils.ZERO_PARAMETERS)
 
@@ -98,7 +102,11 @@ class ApplicationClassInjector implements GrailsArtefactClassInjector {
                     def grailsAppDir = GrailsResourceUtils.getAppDir(new UrlResource(GrailsASTUtils.getSourceUrl(source)))
                     if(grailsAppDir.exists()) {
 
-                        def packageNames = ResourceUtils.getProjectPackageNames(grailsAppDir.file.parentFile).collect() { String str -> new ConstantExpression(str) }
+                        def packageNames = ResourceUtils.getProjectPackageNames(grailsAppDir.file.parentFile)
+                                                        .collect() { String str -> new ConstantExpression(str) }
+                        if(packageNames.any() { ConstantExpression packageName -> ['org','com','io','net'].contains(packageName.text) }) {
+                            GrailsASTUtils.error(source, classNode, "Do not place Groovy sources in common package names such as 'org', 'com', 'io' or 'net' as this can result in performance degradation of classpath scanning")
+                        }
                         packageNamesBody.addStatement(new ReturnStatement(new ExpressionStatement(new ListExpression(packageNames.toList()))))
                         classNode.addMethod("packageNames", Modifier.PUBLIC, collectionClassNode, ZERO_PARAMETERS, null, packageNamesBody)
                     }

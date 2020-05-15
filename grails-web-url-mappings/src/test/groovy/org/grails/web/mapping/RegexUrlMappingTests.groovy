@@ -1,6 +1,10 @@
 package org.grails.web.mapping
 
+import grails.core.DefaultGrailsApplication
+import grails.gorm.validation.ConstrainedProperty
+import grails.gorm.validation.DefaultConstrainedProperty
 import grails.web.mapping.UrlMapping
+import org.grails.datastore.gorm.validation.constraints.registry.DefaultConstraintRegistry
 import org.junit.Test
 import org.springframework.mock.web.MockServletContext
 
@@ -30,18 +34,31 @@ class RegexUrlMappingTests {
     @Test
     void testComparable() {
         def parser = new DefaultUrlMappingParser()
-        def servletContext = new MockServletContext()
-        def m1 = new RegexUrlMapping(parser.parse("/foo/"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m2 = new RegexUrlMapping(parser.parse("/"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m3 = new RegexUrlMapping(parser.parse("/foo/bar/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m4 = new RegexUrlMapping(parser.parse("/foo/(*)/bar"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m5 = new RegexUrlMapping(parser.parse("/(*)/foo/bar"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m6 = new RegexUrlMapping(parser.parse("/foo/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m7 = new RegexUrlMapping(parser.parse("/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m8 = new RegexUrlMapping(parser.parse("/foo/(*)/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m9 = new RegexUrlMapping(parser.parse("/(*)/(*)/bar"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
-        def m10 = new RegexUrlMapping(parser.parse("/(*)/(*)/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, servletContext)
+        def application = new DefaultGrailsApplication()
+        def m1 = new RegexUrlMapping(parser.parse("/foo/"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m2 = new RegexUrlMapping(parser.parse("/"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m3 = new RegexUrlMapping(parser.parse("/foo/bar/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m4 = new RegexUrlMapping(parser.parse("/foo/(*)/bar"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m5 = new RegexUrlMapping(parser.parse("/(*)/foo/bar"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m6 = new RegexUrlMapping(parser.parse("/foo/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m7 = new RegexUrlMapping(parser.parse("/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m8 = new RegexUrlMapping(parser.parse("/foo/(*)/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m9 = new RegexUrlMapping(parser.parse("/(*)/(*)/bar"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m10 = new RegexUrlMapping(parser.parse("/(*)/(*)/(*)"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
+        def m11 = new RegexUrlMapping(parser.parse("/"), "test", null, null, null, null, null, UrlMapping.ANY_VERSION,null, application)
 
+
+        assertTrue m1.compareTo(m1) == 0
+        assertTrue m2.compareTo(m2) == 0
+        assertTrue m3.compareTo(m3) == 0
+        assertTrue m4.compareTo(m4) == 0
+        assertTrue m5.compareTo(m5) == 0
+        assertTrue m6.compareTo(m6) == 0
+        assertTrue m7.compareTo(m7) == 0
+        assertTrue m8.compareTo(m8) == 0
+        assertTrue m9.compareTo(m9) == 0
+        assertTrue m2.compareTo(m11) == 0
+        assertTrue m11.compareTo(m2) == 0
         assertTrue m1.compareTo(m2) < 0
         assertTrue m1.compareTo(m3) < 0
         assertTrue m1.compareTo(m4) < 0
@@ -155,5 +172,15 @@ class RegexUrlMappingTests {
         Collections.sort(urls)
         Collections.reverse(urls)
         assertEquals(correctOrder, urls)
+    }
+
+    @Test
+    void testDollarSignParamsAllowed() {
+        def parser = new DefaultUrlMappingParser()
+        def application = new DefaultGrailsApplication()
+        def defaultRegistry = new DefaultConstraintRegistry()
+        def constraints = [new DefaultConstrainedProperty(UrlMapping.class, "controller", String.class, defaultRegistry), new DefaultConstrainedProperty(UrlMapping.class, "action", String.class, defaultRegistry), new DefaultConstrainedProperty(UrlMapping.class, "id", String.class, defaultRegistry), new DefaultConstrainedProperty(UrlMapping.class, "format", String.class, defaultRegistry)]
+        def m1 = new RegexUrlMapping(parser.parse('/(*)/(*)?/(*)?(.(*))?'), null, null, null, null, null, null, UrlMapping.ANY_VERSION, constraints as ConstrainedProperty[], application)
+        assert m1.createURL([id: 'AST$RING', action: "save", controller: "someController"], null) == '/someController/save/AST$RING'
     }
 }

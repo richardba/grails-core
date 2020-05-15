@@ -1,13 +1,16 @@
 package org.grails.web.codecs
 
+import grails.core.DefaultGrailsApplication
 import org.grails.plugins.codecs.HTMLCodec
-import grails.core.StandaloneGrailsApplication
+import org.junit.jupiter.api.Test
 
-class HTMLCodecTests extends GroovyTestCase {
+import static org.junit.jupiter.api.Assertions.assertEquals
+
+class HTMLCodecTests {
 
     def getEncoderXml() {
         def htmlCodec = new HTMLCodec()
-        def grailsApplication = new StandaloneGrailsApplication()
+        def grailsApplication = new DefaultGrailsApplication()
         grailsApplication.config.grails.views.gsp.htmlcodec = 'xml'
         grailsApplication.configChanged()
         htmlCodec.setGrailsApplication(grailsApplication)
@@ -17,7 +20,7 @@ class HTMLCodecTests extends GroovyTestCase {
 
     def getEncoderHtml() {
         def htmlCodec = new HTMLCodec()
-        def grailsApplication = new StandaloneGrailsApplication()
+        def grailsApplication = new DefaultGrailsApplication()
         grailsApplication.config.grails.views.gsp.htmlcodec = 'html'
         grailsApplication.configChanged()
         htmlCodec.setGrailsApplication(grailsApplication)
@@ -27,12 +30,13 @@ class HTMLCodecTests extends GroovyTestCase {
 
     def getDecoder() {
         def htmlCodec = new HTMLCodec()
-        def grailsApplication = new StandaloneGrailsApplication()
+        def grailsApplication = new DefaultGrailsApplication()
         htmlCodec.setGrailsApplication(grailsApplication)
         htmlCodec.afterPropertiesSet()
         return htmlCodec.getDecoder()
     }
 
+    @Test
     void testEncodeXml() {
         def encoder = getEncoderXml()
         assertEquals('&lt;tag&gt;', encoder.encode('<tag>'))
@@ -41,6 +45,7 @@ class HTMLCodecTests extends GroovyTestCase {
         assertEquals("Vid\u00E9o", encoder.encode("Vid\u00E9o"))
     }
 
+    @Test
     void testEncodeHtml() {
         def encoder = getEncoderHtml()
         assertEquals('&lt;tag&gt;', encoder.encode('<tag>'))
@@ -49,6 +54,7 @@ class HTMLCodecTests extends GroovyTestCase {
         assertEquals("Vid&eacute;o", encoder.encode("Vid\u00E9o"))
     }
 
+    @Test
     void testDecode() {
         def decoder = getDecoder()
         assertEquals('<tag>', decoder.decode('&lt;tag&gt;'))

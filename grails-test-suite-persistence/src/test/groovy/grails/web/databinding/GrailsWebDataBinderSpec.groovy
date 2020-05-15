@@ -21,24 +21,24 @@ import grails.databinding.SimpleMapDataBindingSource
 import grails.databinding.errors.BindingError
 import grails.databinding.events.DataBindingListenerAdapter
 import grails.persistence.Entity
-import grails.test.mixin.Mock
-import grails.test.mixin.TestMixin
-import grails.test.mixin.domain.DomainClassUnitTestMixin
+import grails.testing.gorm.DataTest
 import grails.validation.DeferredBindingActions
 import grails.validation.Validateable
-import org.apache.commons.lang.builder.CompareToBuilder
-import org.grails.databinding.BindingFormat as LegacyBindingFormat
+import groovy.transform.Sortable
 import spock.lang.Ignore
 import spock.lang.Issue
 import spock.lang.Specification
 import spock.lang.Unroll
 
-@TestMixin(DomainClassUnitTestMixin)
-@Mock([Foo, AssociationBindingAuthor, AssociationBindingPage, AssociationBindingBook, Author, Child, CollectionContainer, DataBindingBook, Fidget, Parent, Publication, Publisher, Team, Widget])
-class GrailsWebDataBinderSpec extends Specification {
+class GrailsWebDataBinderSpec extends Specification implements DataTest {
+
     private static Locale defaultLocale = Locale.getDefault()
 
     GrailsWebDataBinder binder
+
+    void setupSpec() {
+        mockDomains Foo, AssociationBindingAuthor, AssociationBindingPage, AssociationBindingBook, Author, Child, CollectionContainer, DataBindingBook, Fidget, Parent, Publication, Publisher, Team, Widget
+    }
 
     void setup() {
         binder = grailsApplication.mainContext.getBean(DataBindingUtils.DATA_BINDER_BEAN_NAME)
@@ -222,7 +222,7 @@ class GrailsWebDataBinderSpec extends Specification {
 
     void 'Test id binding'() {
         given:
-        def author = new Author(name: 'David Foster Wallace').save(flush: true)
+        def author = new Author(name: 'David Foster Wallace').save(flush: true, failOnError:true)
         def publication = new Publication()
 
         when:
@@ -1127,8 +1127,8 @@ class GrailsWebDataBinderSpec extends Specification {
         def publisher = new Publisher()
         
         when:
-        publisher.addToPublications(name: 'Pub 1')
-        publisher.addToPublications(name: 'Pub 2')
+        publisher.addToPublications([title: 'Pub 1'])
+        publisher.addToPublications([title: 'Pub 2'])
         
         then:
         publisher.publications.size() == 2
@@ -1259,27 +1259,6 @@ class GrailsWebDataBinderSpec extends Specification {
         !obj.hasErrors()
     }
     
-    @Issue('GRAILS-11174')
-    void 'Test binding null to a Date marked with the legacy @BindingFormat'() {
-        given:
-        def obj = new DataBindingBook()
-        
-        when:
-        binder.bind obj, [legacyDatePublished: null] as SimpleMapDataBindingSource
-        
-        then:
-        obj.legacyDatePublished == null
-        !obj.hasErrors()
-        
-        when:
-        obj.legacyDatePublished = new Date()
-        binder.bind obj, [legacyDatePublished: null] as SimpleMapDataBindingSource
-        
-        then:
-        obj.legacyDatePublished == null
-        !obj.hasErrors()
-    }
-    
     @Issue('GRAILS-11238')
     void 'Test binding to a property that hides a field of a different type'() {
         when:
@@ -1324,29 +1303,6 @@ class GrailsWebDataBinderSpec extends Specification {
         
         then: 'the date is null'
         book.datePublished == null
-        !book.hasErrors()
-    }
-    
-    @Issue('GRAILS-11472')
-    void 'test binding an empty string to a Date marked with the legacy @BindingFormat'() {
-        given:
-        def book = new DataBindingBook()
-        
-        when: 'a valid date string is bound'
-        binder.bind book, [legacyDatePublished: '11151969'] as SimpleMapDataBindingSource
-        
-        then: 'the date is initialized'
-        !book.hasErrors()
-        book.legacyDatePublished
-        Calendar.NOVEMBER == book.legacyDatePublished.month
-        15 == book.legacyDatePublished.date
-        69 == book.legacyDatePublished.year
-        
-        when: 'an empty string is bound'
-        binder.bind book, [legacyDatePublished: ''] as SimpleMapDataBindingSource
-        
-        then: 'the date is null'
-        book.legacyDatePublished == null
         !book.hasErrors()
     }
     
@@ -1449,13 +1405,14 @@ class Author {
 }
 
 @Entity
-class Widget implements Comparable {
+@Sortable(includes = ["isBindable", "isNotBindable"])
+class Widget  {
     String isBindable
     String isNotBindable
     @BindUsing({ obj, source ->
         def cnt = source['listOfIntegers'] as int
         def result = []
-        cnt.times { c -> 
+        cnt.times { c ->
             result << c 
         }
         result
@@ -1467,12 +1424,7 @@ class Widget implements Comparable {
         isNotBindable bindable: false
         timeZone nullable: true
     }
-
-    int compareTo(Object rhs) {
-        new CompareToBuilder().append(isBindable, rhs.isBindable).append(isNotBindable, rhs.isNotBindable).toComparison()
-    }
 }
-
 @Entity
 class Fidget extends Widget {
     String name
@@ -1497,8 +1449,6 @@ class DataBindingBook {
     List topics
     @BindingFormat("MMddyyyy")
     Date datePublished
-    @LegacyBindingFormat("MMddyyyy")
-    Date legacyDatePublished
     static hasMany = [topics: String, importantPageNumbers: Integer]
 }
 

@@ -18,7 +18,6 @@ package org.grails.cli.profile
 import grails.io.IOUtils
 import grails.util.BuildSettings
 import grails.util.CosineSimilarity
-import groovy.transform.CompileDynamic
 import groovy.transform.CompileStatic
 import groovy.transform.ToString
 import jline.console.completer.ArgumentCompleter
@@ -35,9 +34,9 @@ import org.grails.cli.profile.commands.script.GroovyScriptCommand
 import org.grails.config.NavigableMap
 import org.grails.io.support.Resource
 import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.SafeConstructor
 
-import java.util.regex.Matcher
-
+import static org.grails.cli.profile.ProfileUtil.createDependency
 
 /**
  * Abstract implementation of the profile class
@@ -60,18 +59,23 @@ abstract class AbstractProfile implements Profile {
     protected List<String> buildRepositories = []
     protected List<String> buildPlugins = []
     protected List<String> buildExcludes = []
+    protected List<String> skeletonExcludes = []
+    protected List<String> binaryExtensions = []
+    protected List<String> executablePatterns = []
     protected final List<Command> internalCommands = []
     protected List<String> buildMerge = null
     protected List<Feature> features = []
     protected Set<String> defaultFeaturesNames = []
     protected Set<String> requiredFeatureNames = []
-    final ClassLoader classLoader
+    protected String parentTargetFolder
+    protected final ClassLoader classLoader
     protected ExclusionDependencySelector exclusionDependencySelector = new ExclusionDependencySelector()
     protected String description = "";
+    protected String instructions = "";
     protected String version = BuildSettings.package.implementationVersion
 
     AbstractProfile(Resource profileDir) {
-        this(profileDir, getClass().getClassLoader())
+        this(profileDir, AbstractProfile.getClassLoader())
     }
 
     AbstractProfile(Resource profileDir, ClassLoader classLoader) {
@@ -106,10 +110,11 @@ abstract class AbstractProfile implements Profile {
 
     protected void initialize() {
         def profileYml = profileDir.createRelative("profile.yml")
-        def profileConfig = (Map<String, Object>) new Yaml().loadAs(profileYml.getInputStream(), Map)
+        Map<String, Object> profileConfig = new Yaml(new SafeConstructor()).<Map<String, Object>> load(profileYml.getInputStream())
 
         name = profileConfig.get("name")?.toString()
         description = profileConfig.get("description")?.toString() ?: ''
+        instructions = profileConfig.get("instructions")?.toString() ?: ''
 
         def parents = profileConfig.get("extends")
         if(parents) {
@@ -135,7 +140,7 @@ abstract class AbstractProfile implements Profile {
                 else if(fileName.endsWith('.yml')) {
                     def yamlCommand = profileDir.createRelative("commands/$fileName")
                     if(yamlCommand.exists()) {
-                        def data = new Yaml().loadAs(yamlCommand.getInputStream(), Map.class)
+                        Map<String, Object> data = new Yaml(new SafeConstructor()).<Map>load(yamlCommand.getInputStream())
                         Command cmd = new DefaultMultiStepCommand(clsName.toString(), this, data)
                         Object minArguments = data?.minArguments
                         cmd.minArguments = minArguments instanceof Integer ? (Integer)minArguments : 1
@@ -166,32 +171,23 @@ abstract class AbstractProfile implements Profile {
 
 
 
-        def dependencyMap = profileConfig.get("dependencies")
+        def dependenciesConfig = profileConfig.get("dependencies")
 
-        if(dependencyMap instanceof Map) {
-            for(entry in ((Map)dependencyMap)) {
-                def scope = entry.key
-                def value = entry.value
-                if(value instanceof List) {
-                    if("excludes".equals(scope)) {
-                        List<Exclusion> exclusions =[]
-                        for(dep in ((List)value)) {
-                            def artifact = new DefaultArtifact(dep.toString())
-                            exclusions.add new Exclusion(artifact.groupId ?: null, artifact.artifactId ?: null, artifact.classifier ?: null, artifact.extension ?: null)
-                        }
-                        exclusionDependencySelector = new ExclusionDependencySelector(exclusions)
-                    }
-                    else {
-
-                        for(dep in ((List)value)) {
-                            String coords = dep.toString()
-                            if(coords.count(':') == 1) {
-                                coords = "$coords:BOM"
-                            }
-                            dependencies.add new Dependency(new DefaultArtifact(coords),scope.toString())
-                        }
+        if (dependenciesConfig instanceof List) {
+            List<Exclusion> exclusions =[]
+            for (entry in dependenciesConfig) {
+                if (entry instanceof Map) {
+                    def scope = (String) entry.scope
+                    String coords = (String) entry.coords
+                    if (scope == 'excludes') {
+                        def artifact = new DefaultArtifact(coords)
+                        exclusions.add new Exclusion(artifact.groupId ?: null, artifact.artifactId ?: null, artifact.classifier ?: null, artifact.extension ?: null)
+                    } else {
+                        Dependency dependency = createDependency(coords, scope, entry)
+                        dependencies.add(dependency)
                     }
                 }
+                exclusionDependencySelector = new ExclusionDependencySelector(exclusions)
             }
         }
 
@@ -201,11 +197,38 @@ abstract class AbstractProfile implements Profile {
         this.buildPlugins = (List<String>)navigableConfig.get("build.plugins", [])
         this.buildExcludes = (List<String>)navigableConfig.get("build.excludes", [])
         this.buildMerge = (List<String>)navigableConfig.get("build.merge", null)
-
+        this.parentTargetFolder = (String)navigableConfig.get("skeleton.parent.target", null)
+        this.skeletonExcludes = (List<String>)navigableConfig.get("skeleton.excludes", [])
+        this.binaryExtensions = (List<String>)navigableConfig.get("skeleton.binaryExtensions", [])
+        this.executablePatterns = (List<String>)navigableConfig.get("skeleton.executable", [])
     }
 
     String getDescription() {
-        return description
+        description
+    }
+
+    String getInstructions() {
+        instructions
+    }
+
+    Set<String> getBinaryExtensions() {
+        Set<String> calculatedBinaryExtensions = []
+        def parents = getExtends()
+        for(profile in parents) {
+            calculatedBinaryExtensions.addAll(profile.binaryExtensions)
+        }
+        calculatedBinaryExtensions.addAll(binaryExtensions)
+        return calculatedBinaryExtensions
+    }
+
+    Set<String> getExecutablePatterns() {
+        Set<String> calculatedExecutablePatterns = []
+        def parents = getExtends()
+        for(profile in parents) {
+            calculatedExecutablePatterns.addAll(profile.executablePatterns)
+        }
+        calculatedExecutablePatterns.addAll(executablePatterns)
+        return calculatedExecutablePatterns
     }
 
     @Override
@@ -225,11 +248,11 @@ abstract class AbstractProfile implements Profile {
     @Override
     Iterable<Feature> getFeatures() {
         Set<Feature> calculatedFeatures = []
+        calculatedFeatures.addAll(features)
         def parents = getExtends()
         for(profile in parents) {
             calculatedFeatures.addAll profile.features
         }
-        calculatedFeatures.addAll(features)
         return calculatedFeatures
     }
 
@@ -286,7 +309,7 @@ abstract class AbstractProfile implements Profile {
     }
 
     List<Dependency> getDependencies() {
-        List<Dependency> calculatedDependencies = []
+            List<Dependency> calculatedDependencies = []
         def parents = getExtends()
         for(profile in parents) {
             def dependencies = profile.dependencies
@@ -326,7 +349,7 @@ abstract class AbstractProfile implements Profile {
     @Override
     public Iterable<Profile> getExtends() {
         return parentNames.collect() { String name ->
-            def parent = profileRepository.getProfile(name)
+            def parent = profileRepository.getProfile(name, true)
             if(parent == null) {
                 throw new IllegalStateException("Profile [$name] declares an invalid dependency on parent profile [$name]")
             }
@@ -381,7 +404,7 @@ abstract class AbstractProfile implements Profile {
     @Override
     Iterable<Command> getCommands(ProjectContext context) {
         if(commandsByName == null) {
-            commandsByName = [:]
+            commandsByName = new LinkedHashMap<String, Command>()
             List excludes = []
             def registerCommand = { Command command ->
                 def name = command.name
@@ -389,12 +412,12 @@ abstract class AbstractProfile implements Profile {
                     if(command instanceof ProfileRepositoryAware) {
                         ((ProfileRepositoryAware)command).setProfileRepository(profileRepository)
                     }
-                    commandsByName[name] = command
+                    commandsByName.put(name, command)
                     def desc = command.description
                     def synonyms = desc.synonyms
                     if(synonyms) {
-                        for(syn in synonyms) {
-                            commandsByName[syn] = command
+                        for(String syn in synonyms) {
+                            commandsByName.put(syn, command)
                         }
                     }
                     if(command instanceof ProjectContextAware) {
@@ -471,5 +494,23 @@ abstract class AbstractProfile implements Profile {
             }
 
         }
+    }
+
+    @Override
+    String getParentSkeletonDir() {
+        this.parentTargetFolder
+    }
+
+    @Override
+    File getParentSkeletonDir(File parent) {
+        if (parentSkeletonDir) {
+            new File(parent, parentSkeletonDir)
+        } else {
+            parent
+        }
+    }
+
+    List<String> getSkeletonExcludes() {
+        this.skeletonExcludes
     }
 }

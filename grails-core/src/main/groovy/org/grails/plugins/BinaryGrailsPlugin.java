@@ -31,7 +31,9 @@ import org.springframework.util.StringUtils;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URL;
+import java.nio.charset.Charset;
 import java.util.*;
 
 /**
@@ -46,9 +48,11 @@ import java.util.*;
 public class BinaryGrailsPlugin extends DefaultGrailsPlugin {
 
     public static final String VIEWS_PROPERTIES = "views.properties";
-    public static final String RELATIVE_VIEWS_PROPERTIES = "../gsp/views.properties";
+    public static final String RELATIVE_VIEWS_PROPERTIES = "gsp/views.properties";
     public static final char UNDERSCORE = '_';
     public static final String PROPERTIES_EXTENSION = ".properties";
+    public static final String DEFAULT_PROPERTIES_ENCODING = "UTF-8";
+    public static final String PLUGIN_DESCRIPTOR_PATH = "META-INF/grails-plugin.xml";
 
     private final BinaryGrailsPluginDescriptor descriptor;
     private Class[] providedArtefacts = {};
@@ -118,7 +122,12 @@ public class BinaryGrailsPlugin extends DefaultGrailsPlugin {
 
         if (viewsPropertiesResource == null || !viewsPropertiesResource.exists()) {
             try {
-                viewsPropertiesResource = descriptorResource.createRelative(RELATIVE_VIEWS_PROPERTIES);
+                String urlString = descriptorResource.getURL().toString();
+                if(urlString.endsWith(PLUGIN_DESCRIPTOR_PATH)) {
+                    urlString = urlString.substring(0, urlString.length() - PLUGIN_DESCRIPTOR_PATH.length());
+                    URL newUrl = new URL(urlString + RELATIVE_VIEWS_PROPERTIES);
+                    viewsPropertiesResource = new UrlResource(newUrl);
+                }
             } catch (IOException e) {
                 // ignore
             }
@@ -137,7 +146,7 @@ public class BinaryGrailsPlugin extends DefaultGrailsPlugin {
                 String viewName = view.toString();
                 final String viewClassName = viewsProperties.getProperty(viewName);
                 try {
-                    final Class<?> viewClass = application.getClassLoader().loadClass(viewClassName);
+                    final Class<?> viewClass = grailsApplication.getClassLoader().loadClass(viewClassName);
                     precompiledViewMap.put(viewName, viewClass);
                 } catch (Throwable e) {
                     throw new PluginException("Failed to initialize view ["+viewName+"] from plugin ["+ getName()+ "] : " + e.getMessage(), e);
@@ -158,7 +167,7 @@ public class BinaryGrailsPlugin extends DefaultGrailsPlugin {
 
         List<Class> artefacts = new ArrayList<Class>();
         if (!classNames.isEmpty()) {
-            final ClassLoader classLoader = application.getClassLoader();
+            final ClassLoader classLoader = grailsApplication.getClassLoader();
             for (String className : classNames) {
                 try {
                     artefacts.add(classLoader.loadClass(className));
@@ -228,21 +237,18 @@ public class BinaryGrailsPlugin extends DefaultGrailsPlugin {
 
                     // message bundles are locale specific. The more underscores the locale has the more specific the locale
                     // so we order by the number of underscores present so that the most specific appears
-                    Arrays.sort(resources, new Comparator<Resource>() {
-                        @Override
-                        public int compare(Resource o1, Resource o2) {
-                            String f1 = o1.getFilename();
-                            String f2 = o2.getFilename();
+                    Arrays.sort(resources, (o1, o2) -> {
+                        String f1 = o1.getFilename();
+                        String f2 = o2.getFilename();
 
-                            int firstUnderscoreCount = StringUtils.countOccurrencesOf(f1, "_");
-                            int secondUnderscoreCount = StringUtils.countOccurrencesOf(f2, "_");
+                        int firstUnderscoreCount = StringUtils.countOccurrencesOf(f1, "_");
+                        int secondUnderscoreCount = StringUtils.countOccurrencesOf(f2, "_");
 
-                            if(firstUnderscoreCount == secondUnderscoreCount) {
-                                return 0;
-                            }
-                            else {
-                                return firstUnderscoreCount > secondUnderscoreCount ?  1 : -1;
-                            }
+                        if(firstUnderscoreCount == secondUnderscoreCount) {
+                            return 0;
+                        }
+                        else {
+                            return firstUnderscoreCount > secondUnderscoreCount ?  1 : -1;
                         }
                     });
 
@@ -284,7 +290,7 @@ public class BinaryGrailsPlugin extends DefaultGrailsPlugin {
         for (Resource messageResource : resources) {
             InputStream inputStream = messageResource.getInputStream();
             try {
-                properties.load(inputStream);
+                properties.load(new InputStreamReader(inputStream, Charset.forName(System.getProperty("file.encoding", DEFAULT_PROPERTIES_ENCODING))));
             } finally {
                 try {
                     inputStream.close();

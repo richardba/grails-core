@@ -14,19 +14,16 @@
  */
 package grails.databinding
 
-import grails.databinding.SimpleDataBinder
-import grails.databinding.SimpleMapDataBindingSource
+import grails.databinding.converters.ValueConverter
 import grails.databinding.errors.BindingError
 import grails.databinding.events.DataBindingListenerAdapter
-
-import grails.databinding.BindUsing
-import org.grails.databinding.BindingFormat as LegacyBindingFormat
-import grails.databinding.BindingFormat
 import org.grails.databinding.converters.DateConversionHelper
 
 import spock.lang.Ignore
 import spock.lang.Issue
 import spock.lang.Specification
+
+import java.text.SimpleDateFormat
 
 class SimpleDataBinderSpec extends Specification {
 
@@ -159,20 +156,6 @@ class SimpleDataBinderSpec extends Specification {
         obj.formattedUtilDate == nowDate
     }
 
-    @Issue('GRAILS-10925')
-    void 'Test binding a Date to a Date property marked with the legacy @BindingFormat'() {
-        given:
-        def binder = new SimpleDataBinder()
-        def obj = new DateContainer()
-        def nowDate = new Date()
-        
-        when:
-        binder.bind obj, [legacyFormattedUtilDate: nowDate] as SimpleMapDataBindingSource
-        
-        then:
-        obj.legacyFormattedUtilDate == nowDate
-    }
-
     void 'Test listener is notified for properties in nested maps'() {
         given:
         def binder = new SimpleDataBinder()
@@ -224,7 +207,7 @@ class SimpleDataBinderSpec extends Specification {
     void 'Test binding string to date'() {
         given:
         def binder = new SimpleDataBinder()
-        binder.registerConverter new DateConversionHelper()
+        binder.registerConverter new DateConversionHelper(formatStrings: ['yyyy-MM-dd HH:mm:ss.S',"yyyy-MM-dd'T'HH:mm:ss'Z'","yyyy-MM-dd HH:mm:ss.S z","yyyy-MM-dd'T'HH:mm:ss.SSSX"])
 
         def obj = new DateContainer()
 
@@ -341,6 +324,28 @@ class SimpleDataBinderSpec extends Specification {
         Calendar.APRIL == calendar.get(Calendar.MONTH)
         21 == calendar.get(Calendar.DATE)
         2049 == calendar.get(Calendar.YEAR)
+    }
+
+    void 'Test struct binding to a list'() {
+        given:
+        def binder = new SimpleDataBinder()
+        def obj = new DateCollection()
+
+        when:
+        binder.bind(obj, new SimpleMapDataBindingSource([
+                'dates[0]'      : 'struct',
+                'dates[0]_day'  : '09',
+                'dates[0]_month': '11',
+                'dates[0]_year' : '2012',
+                'dates[1]'      : 'struct',
+                'dates[1]_day'  : '13',
+                'dates[1]_month': '12',
+                'dates[1]_year' : '2012',
+        ]))
+        def dates = obj.dates
+
+        then:
+        dates == [new SimpleDateFormat('yyyy-MM-d').parse("2012-11-9"), new SimpleDateFormat('yyyy-MM-d').parse("2012-12-13")]
     }
 
     void 'Test binding String to enum'() {
@@ -557,6 +562,56 @@ class SimpleDataBinderSpec extends Specification {
         obj.map.one == 1
         obj.map.two == 2
     }
+
+    @Issue('https://github.com/grails/grails-core/issues/11140')
+    void 'Test bind a Integer on a List<Long>'() {
+        given:
+        def binder = new SimpleDataBinder()
+        def widget = new Widget()
+
+        when:
+        binder.bind widget, [listOfLongs: 4] as SimpleMapDataBindingSource
+
+        then:
+        widget.listOfLongs == [4L]
+        widget.listOfLongs.first().getClass() == Long
+    }
+
+    @Issue('https://github.com/grails/grails-core/issues/11235')
+    void 'Test binding to a list using custom value converters'() {
+        given:
+        def binder = new SimpleDataBinder()
+        def comment = new Comment()
+
+        and:
+        binder.registerConverter(new ValueConverter() {
+            @Override
+            boolean canConvert(Object value) {
+                value instanceof String
+            }
+
+            @Override
+            Object convert(Object value) {
+                new Attachment(filename: "$value")
+            }
+
+            @Override
+            Class<?> getTargetType() {
+                return Attachment
+            }
+        })
+
+        when:
+        binder.bind comment, [
+                'attachments[0]': 'foo.txt',
+                'attachments[1]': 'bar.txt'
+        ] as SimpleMapDataBindingSource
+
+        then:
+        comment.attachments.size() == 2
+        comment.attachments.find { it.filename == 'foo.txt' }
+        comment.attachments.find { it.filename == 'bar.txt' }
+    }
 }
 
 class Factory {
@@ -584,6 +639,7 @@ class Widget {
         result
     })
     List<Integer> listOfIntegers = []
+    List<Long> listOfLongs = []
     Set<Factory> factories
 }
 
@@ -603,9 +659,6 @@ class DateContainer {
 
     @BindingFormat('MMddyyyy')
     Date formattedUtilDate
-
-    @LegacyBindingFormat('MMddyyyy')
-    Date legacyFormattedUtilDate
 }
 
 enum Role {
@@ -622,4 +675,16 @@ abstract class AbstractClassWithTypedCollection {
 }
 
 class ClassWithInheritedTypedCollection extends AbstractClassWithTypedCollection {}
+
+class DateCollection {
+    List<Date> dates
+}
+
+class Comment {
+    Set<Attachment> attachments
+}
+
+class Attachment {
+    String filename
+}
 

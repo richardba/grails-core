@@ -19,11 +19,9 @@ import grails.plugins.GrailsPlugin;
 import grails.plugins.GrailsPluginManager;
 import grails.plugins.Plugin;
 import grails.spring.BeanBuilder;
-import grails.util.BuildScope;
 import grails.util.CollectionUtils;
 import grails.util.Environment;
 import grails.util.GrailsUtil;
-import grails.util.Metadata;
 import groovy.lang.*;
 
 import java.io.File;
@@ -45,7 +43,6 @@ import grails.core.GrailsApplication;
 import grails.util.GrailsArrayUtils;
 import grails.util.GrailsClassUtils;
 import org.grails.core.io.CachingPathMatchingResourcePatternResolver;
-import org.grails.core.legacy.LegacyGrailsApplication;
 import org.grails.core.io.SpringResource;
 import org.grails.core.exceptions.GrailsConfigurationException;
 import org.grails.spring.RuntimeSpringConfiguration;
@@ -105,7 +102,6 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
     private Closure onShutdownListener;
     private Class<?>[] providedArtefacts = {};
     private Collection profiles = null;
-    private Map pluginScopes;
     private Map pluginEnvs;
     private List<String> pluginExcludes = new ArrayList<String>();
     private Collection<? extends TypeFilter> typeFilters = new ArrayList<TypeFilter>();
@@ -180,11 +176,11 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
             Plugin p = (Plugin)plugin;
             p.setApplicationContext(applicationContext);
             p.setPlugin(this);
-            p.setGrailsApplication(((LegacyGrailsApplication)application).getGrailsApplication());
+            p.setGrailsApplication(grailsApplication);
             p.setPluginManager(manager);
         }
         else if(plugin instanceof GrailsApplicationAware) {
-            ((GrailsApplicationAware)plugin).setGrailsApplication(((LegacyGrailsApplication)this.application).getGrailsApplication());
+            ((GrailsApplicationAware)plugin).setGrailsApplication(grailsApplication);
         }
         pluginBean = new BeanWrapperImpl(plugin);
 
@@ -220,19 +216,6 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
 
     private void evaluatePluginScopes() {
         // Damn I wish Java had closures
-        pluginScopes = evaluateIncludeExcludeProperty(SCOPES, new Closure(this) {
-            private static final long serialVersionUID = 1;
-            @Override
-            public Object call(Object arguments) {
-                final String scopeName = ((String) arguments).toUpperCase();
-                try {
-                    return BuildScope.valueOf(scopeName);
-                }
-                catch (IllegalArgumentException e) {
-                    throw new GrailsConfigurationException("Plugin " + this + " specifies invalid scope [" + scopeName + "]");
-                }
-            }
-        });
         pluginEnvs = evaluateIncludeExcludeProperty(ENVIRONMENTS, new Closure(this) {
             private static final long serialVersionUID = 1;
             @Override
@@ -507,11 +490,11 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
     }
 
     public ApplicationContext getParentCtx() {
-        return application.getParentContext();
+        return grailsApplication.getParentContext();
     }
 
     public BeanBuilder beans(Closure closure) {
-        BeanBuilder bb = new BeanBuilder(getParentCtx(), new GroovyClassLoader(application.getClassLoader()));
+        BeanBuilder bb = new BeanBuilder(getParentCtx(), new GroovyClassLoader(grailsApplication.getClassLoader()));
         bb.invokeMethod("beans", new Object[]{closure});
         return bb;
     }
@@ -584,10 +567,6 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
         return pluginGrailsClass.getLogicalPropertyName();
     }
 
-    public void addExclude(BuildScope buildScope) {
-        addExcludeRuleInternal(pluginScopes, buildScope);
-    }
-
     @SuppressWarnings("unchecked")
     private void addExcludeRuleInternal(Map map, Object o) {
         Collection excludes = (Collection) map.get(EXCLUDES);
@@ -604,18 +583,13 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
         addExcludeRuleInternal(pluginEnvs, env);
     }
 
-    public boolean supportsScope(BuildScope buildScope) {
-        return supportsValueInIncludeExcludeMap(pluginScopes, buildScope);
-    }
-
     public boolean supportsEnvironment(Environment environment) {
         return supportsValueInIncludeExcludeMap(pluginEnvs, environment.getName());
     }
 
     public boolean supportsCurrentScopeAndEnvironment() {
-        BuildScope bs = BuildScope.getCurrent();
         Environment e = Environment.getCurrent();
-        return supportsEnvironment(e) && supportsScope(bs);
+        return supportsEnvironment(e);
     }
 
     private boolean supportsValueInIncludeExcludeMap(Map includeExcludeMap, Object value) {
@@ -680,28 +654,6 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
         return "[" + getName() + ":" + getVersion() + "]";
     }
 
-    /**
-     * Monitors the plugin resources defined in the watchResources property for changes and
-     * fires onChange events by calling an onChange closure defined in the plugin (if it exists)
-     *
-     * @deprecated
-     */
-    @Override
-    @Deprecated
-    public boolean checkForChanges() {
-        return false; // do nothing
-    }
-
-    /**
-     * Restarts the container
-     *
-     * @deprecated Not needed any more due to the reload agent
-     */
-    @Deprecated
-    public void restartContainer() {
-        // do nothing
-    }
-
     public void setWatchedResources(Resource[] watchedResources) throws IOException {
         this.watchedResources = watchedResources;
     }
@@ -728,11 +680,11 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
     public void refresh() {
         // do nothing
         org.grails.io.support.Resource descriptor = getDescriptor();
-        if (application == null || descriptor == null) {
+        if (grailsApplication == null || descriptor == null) {
             return;
         }
 
-        ClassLoader parent = application.getClassLoader();
+        ClassLoader parent = grailsApplication.getClassLoader();
         GroovyClassLoader gcl = new GroovyClassLoader(parent);
         try {
             initialisePlugin(gcl.parseClass(descriptor.getFile()));
@@ -782,7 +734,7 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
         Map<String, Object> event = CollectionUtils.<String, Object>newMap(
             PLUGIN_CHANGE_EVENT_SOURCE, source,
             PLUGIN_CHANGE_EVENT_PLUGIN, plugin,
-            PLUGIN_CHANGE_EVENT_APPLICATION, application,
+            PLUGIN_CHANGE_EVENT_APPLICATION, grailsApplication,
             PLUGIN_CHANGE_EVENT_MANAGER, getManager(),
             PLUGIN_CHANGE_EVENT_CTX, applicationContext);
 
@@ -878,7 +830,7 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
                 Class artefactClass = (Class) artefact;
                 if (ArtefactHandler.class.isAssignableFrom(artefactClass)) {
                     try {
-                        ((LegacyGrailsApplication)application).getGrailsApplication().registerArtefactHandler((ArtefactHandler) artefactClass.newInstance());
+                        grailsApplication.registerArtefactHandler((ArtefactHandler) artefactClass.newInstance());
                     }
                     catch (InstantiationException e) {
                         LOG.error("Cannot instantiate an Artefact Handler:" + e.getMessage(), e);
@@ -892,7 +844,7 @@ public class DefaultGrailsPlugin extends AbstractGrailsPlugin implements ParentA
                 }
             }
             else if (artefact instanceof ArtefactHandler) {
-                ((LegacyGrailsApplication)application).getGrailsApplication().registerArtefactHandler((ArtefactHandler) artefact);
+                grailsApplication.registerArtefactHandler((ArtefactHandler) artefact);
             }
             else {
                 LOG.error("This object is not an ArtefactHandler:" + artefact + "[" + artefact.getClass().getName() + "]");

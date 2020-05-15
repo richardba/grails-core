@@ -1,15 +1,20 @@
 package org.grails.web.binding.hal.xml
 
 import grails.persistence.Entity
-import grails.test.mixin.TestFor
+import grails.testing.gorm.DataTest
+import grails.testing.web.controllers.ControllerUnitTest
 import grails.web.Controller
 import spock.lang.Specification
 
-@TestFor(BindingController)
-class HalXmlBindingSpec extends Specification {
+class HalXmlBindingSpec extends Specification implements ControllerUnitTest<BindingController>, DataTest {
+
+    Class<?>[] getDomainClassesToMock() {
+        [Person, Address]
+    }
 
     void 'Test binding XML body'() {
         when:
+        request.method = 'POST'
         request.xml = '''<?xml version="1.0" encoding="UTF-8"?>
 <resource href="http://localhost/people/1" hreflang="en">
     <name>Douglas</name>

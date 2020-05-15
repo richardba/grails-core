@@ -16,20 +16,17 @@
 package org.grails.cli.profile.repository
 
 import groovy.transform.CompileStatic
+import org.eclipse.aether.artifact.Artifact
+import org.eclipse.aether.artifact.DefaultArtifact
+import org.grails.cli.GrailsCli
 import org.grails.cli.profile.AbstractProfile
 import org.grails.cli.profile.Command
 import org.grails.cli.profile.Profile
 import org.grails.cli.profile.ProfileRepository
-import org.grails.cli.profile.ProfileRepositoryAware
 import org.grails.cli.profile.ProjectContext
 import org.grails.cli.profile.ProjectContextAware
-import org.grails.cli.profile.commands.DefaultMultiStepCommand
-import org.grails.cli.profile.commands.script.GroovyScriptCommand
-import org.grails.config.NavigableMap
 import org.grails.io.support.ClassPathResource
 import org.grails.io.support.Resource
-import org.yaml.snakeyaml.Yaml
-
 
 /**
  * A repository that loads profiles from JAR files
@@ -42,11 +39,18 @@ abstract class AbstractJarProfileRepository implements ProfileRepository {
 
     protected final List<Profile> allProfiles = []
     protected final Map<String, Profile> profilesByName = [:]
+    protected static final String DEFAULT_PROFILE_GROUPID = "org.grails.profiles"
 
     private Set<URL> registeredUrls = []
+
     @Override
     Profile getProfile(String profileName) {
         return profilesByName[profileName]
+    }
+
+    @Override
+    Profile getProfile(String profileName, Boolean parentProfile) {
+        return getProfile(profileName)
     }
 
     List<Profile> getAllProfiles() {
@@ -64,6 +68,25 @@ abstract class AbstractJarProfileRepository implements ProfileRepository {
         Set<Profile> visitedProfiles = [] as Set
         visitTopologicalSort(profile, sortedProfiles, visitedProfiles)
         return sortedProfiles
+    }
+
+    Artifact getProfileArtifact(String profileName) {
+        if (profileName.contains(':')) {
+            return new DefaultArtifact(profileName)
+        }
+
+        String groupId = DEFAULT_PROFILE_GROUPID
+        String version = null
+
+        Map<String, Map> defaultValues = GrailsCli.getSetting("grails.profiles", Map, [:])
+        defaultValues.remove("repositories")
+        def data = defaultValues.get(profileName)
+        if(data instanceof Map) {
+            groupId = data.get("groupId")
+            version = data.get("version")
+        }
+
+        return new DefaultArtifact(groupId, profileName, null, version)
     }
 
     protected void registerProfile(URL url, ClassLoader parent) {
@@ -115,4 +138,5 @@ abstract class AbstractJarProfileRepository implements ProfileRepository {
             return commandsByName.values()
         }
     }
+
 }

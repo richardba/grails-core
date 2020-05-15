@@ -5,14 +5,17 @@ import grails.util.Environment
 import grails.web.mapping.LinkGenerator
 import grails.web.mapping.ResponseRedirector
 import grails.web.mapping.UrlMappingInfo
+import grails.web.mvc.FlashScope
 import groovy.transform.CompileStatic
 import org.grails.web.servlet.mvc.ActionResultTransformer
 import org.grails.web.servlet.mvc.GrailsWebRequest
 import org.grails.web.util.GrailsApplicationAttributes
+import org.grails.web.util.WebUtils
 import org.springframework.context.ApplicationContext
 import org.springframework.context.ApplicationContextAware
 import org.springframework.web.servlet.HandlerAdapter
 import org.springframework.web.servlet.ModelAndView
+import org.springframework.web.servlet.view.InternalResourceView
 
 import javax.servlet.http.HttpServletRequest
 import javax.servlet.http.HttpServletResponse
@@ -27,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
 @CompileStatic
 class UrlMappingsInfoHandlerAdapter implements HandlerAdapter, ApplicationContextAware{
 
-    private  static final String ASYNC_REQUEST_URI_ATTR = "javax.servlet.async.request_uri"
+
     ApplicationContext applicationContext
 
     protected Collection<ActionResultTransformer> actionResultTransformers = Collections.emptyList();
@@ -50,7 +53,7 @@ class UrlMappingsInfoHandlerAdapter implements HandlerAdapter, ApplicationContex
 
         GrailsWebRequest webRequest = GrailsWebRequest.lookup(request)
 
-        boolean isAsyncRequest = request.getAttribute(ASYNC_REQUEST_URI_ATTR) != null;
+        boolean isAsyncRequest = WebUtils.isAsync(request) && !WebUtils.isError(request);
         if(isAsyncRequest) {
             Object modelAndView = request.getAttribute(GrailsApplicationAttributes.MODEL_AND_VIEW);
             if(modelAndView instanceof ModelAndView) {
@@ -98,14 +101,23 @@ class UrlMappingsInfoHandlerAdapter implements HandlerAdapter, ApplicationContex
                 }
                 else if(result instanceof Map) {
                     String viewName = controllerClass.actionUriToViewName(action)
-                    return new ModelAndView(viewName, new HashMap<String, Object>((Map)result))
+                    def finalModel = new HashMap<String, Object>()
+                    def flashScope = webRequest.getFlashScope()
+                    if(!flashScope.isEmpty()) {
+                        def chainModel = flashScope.get(FlashScope.CHAIN_MODEL)
+                        if(chainModel instanceof Map) {
+                            finalModel.putAll((Map)chainModel)
+                        }
+                    }
+                    finalModel.putAll((Map)result)
+
+                    return new ModelAndView(viewName, finalModel)
                 }
                 else if(result instanceof ModelAndView) {
                     return (ModelAndView) result
                 } else if(result == null &&
                           webRequest.renderView) {
-                    def viewUri = "/${controllerClass.logicalPropertyName}/${action}"
-                    return new ModelAndView(viewUri)
+                    return new ModelAndView(controllerClass.actionUriToViewName(action))
                 }
             }
             else if(info.viewName) {
@@ -119,6 +131,8 @@ class UrlMappingsInfoHandlerAdapter implements HandlerAdapter, ApplicationContex
                 else {
                     redirector?.redirect(uri: i.toString())
                 }
+            } else if (info.getURI()) {
+                return new ModelAndView(new InternalResourceView(info.getURI()))
             }
         }
         return null

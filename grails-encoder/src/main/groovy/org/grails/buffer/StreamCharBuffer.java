@@ -669,28 +669,6 @@ public class StreamCharBuffer extends GroovyObjectSupport implements Writable, C
     }
 
     /**
-     * Reads the buffer to a char[].
-     *
-     * @return the chars
-     * @deprecated use toCharArray() directly
-     */
-    @Deprecated
-    public char[] readAsCharArray() {
-        return toCharArray();
-    }
-
-    /**
-     * Reads the buffer to a String.
-     *
-     * @return the String
-     * @deprecated Use toString() directly
-     */
-    @Deprecated
-    public String readAsString() {
-        return toString();
-    }
-
-    /**
      * {@inheritDoc}
      *
      * Reads (and empties) the buffer to a String, but caches the return value for subsequent calls.
@@ -2675,12 +2653,12 @@ public class StreamCharBuffer extends GroovyObjectSupport implements Writable, C
         if (!notifyParentBuffersEnabled)
             return;
 
-        if (parentBuffers == null) {
+        if (parentBuffers == null || parentBuffers.isEmpty()) {
             return;
         }
 
-        for (Iterator<SoftReference<StreamCharBufferKey>> i = parentBuffers.iterator(); i.hasNext();) {
-            SoftReference<StreamCharBufferKey> ref = i.next();
+        List<SoftReference<StreamCharBufferKey>> parentBuffersList = new ArrayList<>(parentBuffers);
+        for (SoftReference<StreamCharBufferKey> ref : parentBuffersList) {
             final StreamCharBuffer.StreamCharBufferKey parentKey = ref.get();
             boolean removeIt = true;
             if (parentKey != null) {
@@ -2688,7 +2666,7 @@ public class StreamCharBuffer extends GroovyObjectSupport implements Writable, C
                 removeIt = !parent.bufferChanged(this);
             }
             if (removeIt) {
-                i.remove();
+                parentBuffers.remove(ref);
             }
         }
     }

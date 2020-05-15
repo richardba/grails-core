@@ -16,17 +16,13 @@
 package org.grails.web.mapping;
 
 import grails.core.GrailsApplication;
-import grails.validation.ConstrainedProperty;
+import grails.gorm.validation.ConstrainedProperty;
 import grails.web.mapping.UrlMappingData;
 import grails.web.mapping.UrlMappingInfo;
+import org.springframework.util.Assert;
 
 import java.util.Collections;
 import java.util.Map;
-
-import javax.servlet.ServletContext;
-
-import org.grails.web.util.WebUtils;
-import org.springframework.util.Assert;
 
 /**
  * A Url mapping for http response codes.
@@ -48,11 +44,6 @@ public class ResponseCodeUrlMapping extends AbstractUrlMapping {
 
         Assert.isTrue(constraints == null || constraints.length == 0,
                 "Constraints can't be used for response code url mapping");
-    }
-
-    @Deprecated
-    public ResponseCodeUrlMapping(UrlMappingData urlData, Object controllerName, Object actionName, Object namespace, Object pluginName, Object viewName, ConstrainedProperty[] constraints, ServletContext servletContext) {
-        this(null, controllerName, actionName, namespace, pluginName, viewName, constraints, WebUtils.findApplication(servletContext));
     }
 
     public UrlMappingInfo match(String uri) {

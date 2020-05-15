@@ -15,13 +15,15 @@
  */
 package org.grails.plugins.web.rest.transform
 
+import grails.io.IOUtils
+import org.grails.datastore.gorm.transactions.transform.TransactionalTransform
+
 import static java.lang.reflect.Modifier.*
 import static org.grails.compiler.injection.GrailsASTUtils.*
 import grails.artefact.Artefact
 import grails.compiler.ast.ClassInjector
 import grails.rest.Resource
 import grails.rest.RestfulController
-import grails.util.BuildSettings
 import grails.util.GrailsNameUtils
 import grails.web.controllers.ControllerMethod
 import grails.web.mapping.UrlMappings
@@ -69,9 +71,6 @@ import org.grails.compiler.injection.GrailsAwareInjectionOperation
 import org.grails.compiler.injection.TraitInjectionUtils
 import org.grails.compiler.web.ControllerActionTransformer
 import org.grails.core.artefact.ControllerArtefactHandler
-import org.grails.core.io.DefaultResourceLocator
-import org.grails.core.io.ResourceLocator
-import org.grails.transaction.transform.TransactionalTransform
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 
@@ -93,23 +92,14 @@ class ResourceTransform implements ASTTransformation, CompilationUnitAware {
     public static final String ATTR_URI = "uri"
     public static final String PARAMS_VARIABLE = "params"
     public static final ConstantExpression CONSTANT_STATUS = new ConstantExpression(ARGUMENT_STATUS)
+    public static final String ATTR_NAMESPACE ="namespace"
     public static final String RENDER_METHOD = "render"
     public static final String ARGUMENT_STATUS = "status"
     public static final String REDIRECT_METHOD = "redirect"
     public static final ClassNode AUTOWIRED_CLASS_NODE = new ClassNode(Autowired).getPlainNodeReference()
 
-    private ResourceLocator resourceLocator
     private CompilationUnit unit
     
-    ResourceLocator getResourceLocator() {
-        if (resourceLocator == null) {
-            resourceLocator = new DefaultResourceLocator()
-            String basedir = BuildSettings.BASE_DIR.absolutePath
-
-            resourceLocator.setSearchLocation(basedir)
-        }
-        return resourceLocator
-    }
 
     @Override
     void visit(ASTNode[] astNodes, SourceUnit source) {
@@ -123,14 +113,12 @@ class ResourceTransform implements ASTTransformation, CompilationUnitAware {
             return
         }
 
-        final resourceLocator = getResourceLocator()
-        final className = "${parent.name}${ControllerArtefactHandler.TYPE}"
-        final resource = resourceLocator.findResourceForClassName(className)
-
+        String className = "${parent.name}${ControllerArtefactHandler.TYPE}"
+        final File resource = IOUtils.findSourceFile(className)
         LinkableTransform.addLinkingMethods(parent)
 
         if (resource == null) {
-            ClassNode<?> superClassNode
+            ClassNode superClassNode
             Expression superClassAttribute = annotationNode.getMember(ATTR_SUPER_CLASS)
             if(superClassAttribute instanceof ClassExpression) {
                 superClassNode = ((ClassExpression)superClassAttribute).getType()
@@ -159,6 +147,7 @@ class ResourceTransform implements ASTTransformation, CompilationUnitAware {
             
             final responseFormatsAttr = annotationNode.getMember(ATTR_RESPONSE_FORMATS)
             final uriAttr = annotationNode.getMember(ATTR_URI)
+            final namespaceAttr = annotationNode.getMember(ATTR_NAMESPACE)
             final domainPropertyName = GrailsNameUtils.getPropertyName(parent.getName())
 
             ListExpression responseFormatsExpression = new ListExpression()
@@ -177,14 +166,20 @@ class ResourceTransform implements ASTTransformation, CompilationUnitAware {
                     }
                 }
             } else {
-                responseFormatsExpression.addExpression(new ConstantExpression("xml"))
                 responseFormatsExpression.addExpression(new ConstantExpression("json"))
+                responseFormatsExpression.addExpression(new ConstantExpression("xml"))
             }
 
-            if (uriAttr != null) {
-                final uri = uriAttr.getText()
-                if(uri) {
+            if (uriAttr != null || namespaceAttr != null) {
+
+                String uri = uriAttr?.getText()
+                final namespace=namespaceAttr?.getText()
+                if(uri || namespace) {
                     final urlMappingsClassNode = new ClassNode(UrlMappings).getPlainNodeReference()
+
+                    final lazyInitField = new FieldNode('lazyInit', PUBLIC | STATIC | FINAL, ClassHelper.Boolean_TYPE,newControllerClassNode, new ConstantExpression(Boolean.FALSE))
+                    newControllerClassNode.addField(lazyInitField)
+
                     final urlMappingsField = new FieldNode('$urlMappings', PRIVATE, urlMappingsClassNode,newControllerClassNode, null)
                     newControllerClassNode.addField(urlMappingsField)
                     final urlMappingsSetterParam = new Parameter(urlMappingsClassNode, "um")
@@ -205,6 +200,21 @@ class ResourceTransform implements ASTTransformation, CompilationUnitAware {
                     final methodBody = new BlockStatement()
 
                     final urlMappingsVar = new VariableExpression(urlMappingsField.name)
+
+                    MapExpression map=new MapExpression()
+                    if(uri){
+                        map.addMapEntryExpression(new MapEntryExpression(new ConstantExpression("resources"), new ConstantExpression(domainPropertyName)))
+                    }
+                    if(namespace){
+                        final namespaceField = new FieldNode('namespace', STATIC, ClassHelper.STRING_TYPE,newControllerClassNode, new ConstantExpression(namespace))
+                        newControllerClassNode.addField(namespaceField)
+                        if(map.getMapEntryExpressions().size()==0){
+                            uri="/${namespace}/${domainPropertyName}"
+                            map.addMapEntryExpression(new MapEntryExpression(new ConstantExpression("resources"), new ConstantExpression(domainPropertyName)))
+                        }
+                        map.addMapEntryExpression(new MapEntryExpression(new ConstantExpression("namespace"), new ConstantExpression(namespace)))
+                    }
+
                     final resourcesUrlMapping = new MethodCallExpression(buildThisExpression(), uri, new MapExpression([ new MapEntryExpression(new ConstantExpression("resources"), new ConstantExpression(domainPropertyName))]))
                     final urlMappingsClosure = new ClosureExpression(null, new ExpressionStatement(resourcesUrlMapping))
 
@@ -225,7 +235,7 @@ class ResourceTransform implements ASTTransformation, CompilationUnitAware {
             newControllerClassNode.addProperty("responseFormats", publicStaticFinal, new ClassNode(List).getPlainNodeReference(), responseFormatsExpression, null, null)
 
             ArtefactTypeAstTransformation.performInjection(source, newControllerClassNode, injectors.findAll { it instanceof ControllerActionTransformer })
-            new TransactionalTransform().weaveTransactionalBehavior(source, newControllerClassNode, transactionalAnn)
+            new TransactionalTransform().visit(source, transactionalAnn, newControllerClassNode)
             newControllerClassNode.setModule(ast)
 
             final artefactAnnotation = new AnnotationNode(new ClassNode(Artefact))

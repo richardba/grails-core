@@ -5,15 +5,29 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 */
-
+body {
+    font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;;
+}
 body, .wiki-table th strong {
     color: #444;
 }
 
-a, a:hover, a:focus, a:active, a:hover, #main .project strong, #table-of-content a:hover strong,
-    #table-of-content a strong, .menu .menu-block h1, .menu a:hover, .local .local-title .toggle a,
-    #navigation #nav-summary-childs a:hover, #main h1, #main h2 {
-    color: #7c9d00;
+a, 
+a:hover,
+a:focus,
+a:active,
+a:hover,
+#main .project strong,
+#table-of-content a:hover strong,
+#table-of-content a strong,
+.menu .menu-block h1,
+.menu a:hover,
+.local .local-title .toggle a,
+#navigation #nav-summary-childs a:hover,
+#main h1,
+#main h2 {
+    color: #feb672;
+    font-weight: bold;
 }
 
 #main .project h1, #table-of-content h2 {
@@ -67,15 +81,15 @@ a, a:hover, a:focus, a:active, a:hover, #main .project strong, #table-of-content
 
 
 #navigation .selected a {
-    background: #5a7103;
+    background: #424649;
 }
 
 #navigation a:hover {
-    background: #678104;
+    background: #db4800;
 }
 
 #navigation .selected a:hover, #navigation .active .button {
-    background: #526703;
+    background: #db4800;
 }
 
 /*
@@ -95,19 +109,52 @@ a, a:hover, a:focus, a:active, a:hover, #main .project strong, #table-of-content
     background: #F2F2F2 url(../img/default/separator-horizontal.gif) repeat-x 0 bottom;
 }
 
-#table-of-content a:hover {
-    background: #F2F2F2 url(../img/default/linear-gradient.png) repeat-x 0 0;
-}
-
 .wiki-table th, #navigation {
-    background: #a4c001 url(../img/default/linear-gradient-green.png) repeat-x 0 0;
+    background: #424649;
 }
 
 #navigation .separator {
     background: url(../img/default/separator-menu.png) no-repeat 0 center;
 }
 
-
+.navTitle {
+    color:#fff;
+    background: url(../img/grails.svg) no-repeat 0 center;
+    background-size: 80px;
+    padding-left: 90px;
+    width: 180px;
+    float: right;
+    line-height: 3.1em;
+    height: 75px;
+    padding-top: 25px;
+}
+.btn-default {
+    background-color: #fff;
+    border-color: #ccc;
+    color: #333;
+}
+.btn {
+    -moz-user-select: none;
+    background-image: none;
+    border: 1px solid;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-block;
+    font-size: 14px;
+    font-weight: normal;
+    line-height: 1.42857;
+    margin-bottom: 0;
+    padding: 6px 12px;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.contribute-btn {
+    bottom: 40px;
+    float: right;
+    position: relative;
+    right: 0;
+}
 
 /*
 ////////////////////////////////////////////////////////////////////////////////
@@ -124,7 +171,7 @@ a, a:hover, a:focus, a:active, a:hover, #main .project strong, #table-of-content
 
 #navigation {
     border-style: solid;
-    border-color: #344d06;
+    border-color: #7c7c7c;
 }
 
 .code {

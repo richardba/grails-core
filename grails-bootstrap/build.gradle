@@ -2,14 +2,20 @@ import org.apache.tools.ant.filters.ReplaceTokens
 
 dependencies {
     compile ( "org.codehaus.groovy:groovy-xml:$groovyVersion" )
-    compile "org.yaml:snakeyaml:1.14"
-
-    provided ("org.fusesource.jansi:jansi:$jansiVersion")
-    provided("jline:jline:$jlineVersion")
-    provided("net.java.dev.jna:jna:$jnaVersion")
+    compile ( "org.codehaus.groovy:groovy-templates:$groovyVersion" )
+    compile "org.yaml:snakeyaml:1.23"
+    
+    compileOnly("io.methvin:directory-watcher:0.3.0")
+    compileOnly("org.fusesource.jansi:jansi:$jansiVersion")
+    compileOnly("jline:jline:$jlineVersion")
+    compileOnly("net.java.dev.jna:jna:$jnaVersion")
 
     // Ant
-    compile "org.codehaus.groovy:groovy-ant:$groovyVersion"
+    compileOnly "org.codehaus.groovy:groovy-ant:$groovyVersion"
+
+    testCompile("org.fusesource.jansi:jansi:$jansiVersion")
+    testCompile("jline:jline:$jlineVersion")
+
 }
 
 processResources {

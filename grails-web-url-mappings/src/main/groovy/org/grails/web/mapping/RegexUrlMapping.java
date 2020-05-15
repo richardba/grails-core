@@ -17,43 +17,31 @@ package org.grails.web.mapping;
 
 import grails.core.GrailsApplication;
 import grails.core.GrailsControllerClass;
+import grails.gorm.validation.Constrained;
+import grails.gorm.validation.ConstrainedProperty;
+import grails.plugins.VersionComparator;
 import grails.util.GrailsStringUtils;
-import grails.validation.ConstrainedProperty;
 import grails.web.mapping.UrlMapping;
 import grails.web.mapping.UrlMappingData;
 import grails.web.mapping.UrlMappingInfo;
 import grails.web.mapping.exceptions.UrlMappingException;
 import groovy.lang.Closure;
-
-import java.io.UnsupportedEncodingException;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
-
-import javax.servlet.ServletContext;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import grails.plugins.VersionComparator;
 import org.grails.web.servlet.mvc.GrailsWebRequest;
 import org.grails.web.servlet.mvc.exceptions.ControllerExecutionException;
-import org.grails.web.util.WebUtils;
-import org.springframework.http.HttpMethod;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.Assert;
 import org.springframework.validation.Errors;
 import org.springframework.validation.MapBindingResult;
 import org.springframework.web.context.request.RequestContextHolder;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * <p>A UrlMapping implementation that takes a Grails URL pattern and turns it into a regex matcher so that
@@ -74,11 +62,12 @@ import org.springframework.web.context.request.RequestContextHolder;
 @SuppressWarnings("rawtypes")
 public class RegexUrlMapping extends AbstractUrlMapping {
 
+    public static final String FORMAT_PARAMETER = "format";
     private Pattern[] patterns;
     private Map<Integer, List<Pattern>> patternByTokenCount = new HashMap<Integer, List<Pattern>>();
     private UrlMappingData urlData;
     private static final String DEFAULT_ENCODING = "UTF-8";
-    private static final Log LOG = LogFactory.getLog(RegexUrlMapping.class);
+    private static final Logger LOG = LoggerFactory.getLogger(RegexUrlMapping.class);
     public static final Pattern DOUBLE_WILDCARD_PATTERN = Pattern.compile("\\(\\*\\*?\\)\\??");
     public static final Pattern OPTIONAL_EXTENSION_WILDCARD_PATTERN = Pattern.compile("[^/]+\\(\\.\\(\\*\\)\\)");
 
@@ -97,9 +86,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
     public RegexUrlMapping(UrlMappingData data, Object controllerName, Object actionName, Object namespace, Object pluginName, Object viewName, String httpMethod, String version, ConstrainedProperty[] constraints, GrailsApplication grailsApplication) {
         this(null, data, controllerName, actionName, namespace, pluginName, viewName, httpMethod, version, constraints, grailsApplication);
     }
-    public RegexUrlMapping(RegexUrlMapping regexUrlMapping, HttpMethod httpMethod) {
-        this(regexUrlMapping.urlData, regexUrlMapping.controllerName, regexUrlMapping.actionName, regexUrlMapping.namespace, regexUrlMapping.pluginName, regexUrlMapping.viewName, httpMethod.toString(), regexUrlMapping.version, regexUrlMapping.constraints, regexUrlMapping.grailsApplication);
-    }
+
     /**
      * Constructs a new RegexUrlMapping for the given pattern, controller name, action name and constraints.
      *
@@ -113,7 +100,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
      * @param version     The version
      * @param constraints    A list of ConstrainedProperty instances that relate to tokens in the URL
      * @param grailsApplication The Grails application
-     * @see grails.validation.ConstrainedProperty
+     * @see ConstrainedProperty
      */
     public RegexUrlMapping(Object redirectInfo, UrlMappingData data, Object controllerName, Object actionName, Object namespace, Object pluginName, Object viewName, String httpMethod, String version, ConstrainedProperty[] constraints, GrailsApplication grailsApplication) {
         super(redirectInfo, controllerName, actionName, namespace, pluginName, viewName, constraints != null ? constraints : new ConstrainedProperty[0], grailsApplication);
@@ -124,30 +111,6 @@ public class RegexUrlMapping extends AbstractUrlMapping {
             this.version = version;
         }
         parse(data, constraints);
-    }
-
-    /**
-     * @deprecated Use {@link #RegexUrlMapping(grails.web.mapping.UrlMappingData, java.net.URI, grails.validation.ConstrainedProperty[], grails.core.GrailsApplication)} instead
-     */
-    @Deprecated
-    public RegexUrlMapping(UrlMappingData data, URI uri, ConstrainedProperty[] constraints, ServletContext servletContext) {
-        this(data, uri, constraints, WebUtils.findApplication(servletContext));
-    }
-
-    /**
-     * @deprecated Use {@link #RegexUrlMapping(grails.web.mapping.UrlMappingData, Object, Object, Object, Object, Object, String, String, grails.validation.ConstrainedProperty[], grails.core.GrailsApplication)}  instead
-     */
-    @Deprecated
-    public RegexUrlMapping(UrlMappingData data, Object controllerName, Object actionName, Object namespace, Object pluginName, Object viewName, String httpMethod, String version, ConstrainedProperty[] constraints, ServletContext servletContext) {
-        this(data, controllerName, actionName, namespace, pluginName, viewName, httpMethod, version, constraints, WebUtils.findApplication(servletContext));
-    }
-
-    /**
-     * @deprecated Use {@link #RegexUrlMapping(Object, grails.web.mapping.UrlMappingData, Object, Object, Object, Object, Object, String, String, grails.validation.ConstrainedProperty[], grails.core.GrailsApplication)} instead
-     */
-    @Deprecated
-    public RegexUrlMapping(Object redirectInfo, UrlMappingData data, Object controllerName, Object actionName, Object namespace, Object pluginName, Object viewName, String httpMethod, String version, ConstrainedProperty[] constraints, ServletContext servletContext) {
-        this(redirectInfo, data, controllerName, actionName, namespace, pluginName, viewName, httpMethod, version, constraints, WebUtils.findApplication(servletContext));
     }
 
     private void parse(UrlMappingData data, ConstrainedProperty[] constraints) {
@@ -162,7 +125,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
             Integer slashCount = org.springframework.util.StringUtils.countOccurrencesOf(url, "/");
             List<Pattern> tokenCountPatterns = patternByTokenCount.get(slashCount);
             if (tokenCountPatterns == null) {
-                tokenCountPatterns = new ArrayList<Pattern>();
+                tokenCountPatterns = new ArrayList<>();
                 patternByTokenCount.put(slashCount, tokenCountPatterns);
             }
 
@@ -183,7 +146,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
             int constraintUpperBound = constraints.length;
             if (data.hasOptionalExtension()) {
                 constraintUpperBound--;
-                constraints[constraintUpperBound].setNullable(true);
+                setNullable(constraints[constraintUpperBound]);
             }
 
             for (int i = 0; i < constraintUpperBound; i++) {
@@ -200,10 +163,10 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                         // special handling for last token to deal with optional extension
                         if (isLastToken) {
                             if (token.startsWith(CAPTURED_WILDCARD + '?') ) {
-                                constraint.setNullable(true);
+                                setNullable(constraint);
                             }
                             if (token.endsWith(OPTIONAL_EXTENSION_WILDCARD + '?')) {
-                                constraints[constraints.length-1].setNullable(true);
+                                setNullable(constraints[constraints.length-1]);
                             }
                         }
                         else {
@@ -216,7 +179,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                 }
 
                 if (pos != -1 && pos + shiftLength < token.length() && token.charAt(pos + shiftLength) == '?') {
-                    constraint.setNullable(true);
+                    setNullable(constraint);
                 }
 
                 // Move on to the next place-holder.
@@ -226,6 +189,13 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                     pos = 0;
                 }
             }
+        }
+    }
+
+    private void setNullable(ConstrainedProperty constraint) {
+        ConstrainedProperty constrainedProperty = constraint;
+        if(!constrainedProperty.isNullable()) {
+               constrainedProperty.applyConstraint(ConstrainedProperty.NULLABLE_CONSTRAINT, true);
         }
     }
 
@@ -251,9 +221,9 @@ public class RegexUrlMapping extends AbstractUrlMapping {
 
             // Now replace "*" with "[^/]" and "**" with ".*".
             pattern = "^" + urlRoot
-                    .replace("(\\.(*))", "\\.?([^/]+)?")
-                    .replaceAll("([^\\*])\\*([^\\*])", "$1[^/]+$2")
-                    .replaceAll("([^\\*])\\*$", "$1[^/]+")
+                    .replace("(\\.(*))", "(\\.[^/]+)?")
+                    .replaceAll("([^\\*])\\*([^\\*])", "$1[^/]+?$2")
+                    .replaceAll("([^\\*])\\*$", "$1[^/]+?")
                     .replaceAll("\\*\\*", ".*");
 
             if("/(*)(\\.(*))".equals(urlEnd)) {
@@ -263,12 +233,12 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                 pattern += "/([^/]+)\\.([^/.]+)?";
             } else {
                 pattern += urlEnd
-                        .replace("(\\.(*))", "\\.?([^/]+)?")
-                        .replaceAll("([^\\*])\\*([^\\*])", "$1[^/]+$2")
-                        .replaceAll("([^\\*])\\*$", "$1[^/]+")
+                        .replace("(\\.(*))", "(\\.[^/]+)?")
+                        .replaceAll("([^\\*])\\*([^\\*])", "$1[^/]+?$2")
+                        .replaceAll("([^\\*])\\*$", "$1[^/]+?")
                         .replaceAll("\\*\\*", ".*")
-                        .replaceAll("\\(\\[\\^\\/\\]\\+\\)\\\\\\.", "([^/.]+)\\\\.")
-                        .replaceAll("\\(\\[\\^\\/\\]\\+\\)\\?\\\\\\.", "([^/.]+)\\?\\\\.")
+                        .replaceAll("\\(\\[\\^\\/\\]\\+\\)\\\\\\.", "([^/.]+?)\\\\.")
+                        .replaceAll("\\(\\[\\^\\/\\]\\+\\)\\?\\\\\\.", "([^/.]+?)\\?\\\\.")
                 ;
             }
             pattern += "/??$";
@@ -318,7 +288,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
         if (includeContextPath) {
             GrailsWebRequest webRequest = (GrailsWebRequest) RequestContextHolder.getRequestAttributes();
             if (webRequest != null) {
-                contextPath = webRequest.getAttributes().getApplicationUri(webRequest.getCurrentRequest());
+                contextPath = webRequest.getContextPath();
             }
         }
         if (paramValues == null) paramValues = Collections.emptyMap();
@@ -345,7 +315,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                     usedParams.add(propName);
 
                     if (value != null) {
-                        token = token.replaceFirst(DOUBLE_WILDCARD_PATTERN.pattern(), value.toString());
+                        token = token.replaceFirst(DOUBLE_WILDCARD_PATTERN.pattern(), Matcher.quoteReplacement(value.toString()));
                         tokenSet = true;
                     }
                     else {
@@ -557,6 +527,7 @@ public class RegexUrlMapping extends AbstractUrlMapping {
         usedParams.add("controller");
         usedParams.add("action");
         usedParams.add("namespace");
+        usedParams.add("plugin");
 
         // A 'null' encoding will cause an exception, so default to 'UTF-8'.
         if (encoding == null) {
@@ -634,7 +605,13 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                     return null;
                 }
 
-                params.put(cp.getPropertyName(), lastGroup);
+                String propertyName = cp.getPropertyName();
+                if(lastGroup != null) {
+                    if(FORMAT_PARAMETER.equals(propertyName) && lastGroup.startsWith(".")) {
+                        lastGroup = lastGroup.substring(1);
+                    }
+                }
+                params.put(propertyName, lastGroup);
                 break;
             }
             else {
@@ -651,7 +628,11 @@ public class RegexUrlMapping extends AbstractUrlMapping {
                         return null;
                     }
 
-                    params.put(cp.getPropertyName(), lastGroup);
+                    String propertyName = cp.getPropertyName();
+                    if(FORMAT_PARAMETER.equals(propertyName) && lastGroup.startsWith(".")) {
+                        lastGroup = lastGroup.substring(1);
+                    }
+                    params.put(propertyName, lastGroup);
                 }
             }
 
@@ -761,46 +742,83 @@ public class RegexUrlMapping extends AbstractUrlMapping {
 
         UrlMapping other = (UrlMapping) o;
 
+        // this wild card count
         final int thisStaticTokenCount = getStaticTokenCount(this);
+        final int thisSingleWildcardCount = getSingleWildcardCount(this);
+        final int thisDoubleWildcardCount = getDoubleWildcardCount(this);
+
+        // the other wild card count
         final int otherStaticTokenCount = getStaticTokenCount(other);
         final int otherSingleWildcardCount = getSingleWildcardCount(other);
-        final int thisSingleWildcardCount = getSingleWildcardCount(this);
         final int otherDoubleWildcardCount = getDoubleWildcardCount(other);
-        final int thisDoubleWildcardCount = getDoubleWildcardCount(this);
+
         final boolean hasWildCards = thisDoubleWildcardCount > 0 || thisSingleWildcardCount > 0;
         final boolean otherHasWildCards = otherDoubleWildcardCount > 0 || otherSingleWildcardCount > 0;
 
         // Always prioritise the / root mapping
-        if(thisStaticTokenCount == 0 && thisSingleWildcardCount == 0 && thisDoubleWildcardCount == 0) {
+        boolean isThisRoot = thisStaticTokenCount == 0 && thisSingleWildcardCount == 0 && thisDoubleWildcardCount == 0;
+        boolean isThatRoot = otherStaticTokenCount == 0 && otherDoubleWildcardCount == 0 && otherSingleWildcardCount == 0;
+
+        if(isThisRoot && isThatRoot) {
+            return evaluatePluginOrder(other);
+        }
+        else if(isThisRoot) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a higher precedence than [{}] because it is the root", this.toString(), other.toString());
+            }
             return 1;
         }
-        if(otherStaticTokenCount == 0 && otherSingleWildcardCount == 0 && otherDoubleWildcardCount == 0) {
+        else if(isThatRoot) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a lower precedence than [{}] because the latter is the root", this.toString(), other.toString());
+            }
             return -1;
         }
 
-        if (otherStaticTokenCount ==0 && thisStaticTokenCount > 0) {
+        if (otherStaticTokenCount == 0 && thisStaticTokenCount > 0) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a higher precedence than [{}] because it has more path tokens", this.toString(), other.toString());
+            }
             return 1;
         }
-        if (thisStaticTokenCount ==0 && otherStaticTokenCount>0) {
+
+        if (thisStaticTokenCount == 0 && otherStaticTokenCount > 0) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a lower precedence than [{}] because it has fewer path tokens", this.toString(), other.toString());
+            }
             return -1;
         }
 
         final int thisStaticAndWildcardTokenCount = getStaticAndWildcardTokenCount(this);
         final int otherStaticAndWildcardTokenCount = getStaticAndWildcardTokenCount(other);
+
         if (otherStaticAndWildcardTokenCount==0 && thisStaticAndWildcardTokenCount>0) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a higher precedence than [{}] because it has more path tokens [{} vs {}]", this.toString(), other.toString(), thisStaticAndWildcardTokenCount, otherStaticAndWildcardTokenCount);
+            }
             return 1;
         }
         if (thisStaticAndWildcardTokenCount==0 && otherStaticAndWildcardTokenCount>0) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a higher precedence than [{}] because the latter has more path tokens [{} vs {}]", this.toString(), other.toString(), thisStaticAndWildcardTokenCount, otherStaticAndWildcardTokenCount);
+            }
             return -1;
         }
 
         final int staticDiff = thisStaticTokenCount - otherStaticTokenCount;
         if (staticDiff < 0 && !otherHasWildCards) {
-            return staticDiff;
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a lower precedence than [{}] because the latter has more concrete path tokens [{} vs {}]", this.toString(), other.toString(), thisStaticTokenCount, otherStaticTokenCount);
+            }
+            return -1;
         }
         else if(staticDiff > 0 && !hasWildCards) {
-            return staticDiff;
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a higher precedence than [{}] because it has more concrete path tokens [{} vs {}]", this.toString(), other.toString(), thisStaticTokenCount, otherStaticTokenCount);
+            }
+            return 1;
         }
+
         String[] thisTokens = getUrlData().getTokens();
         String[] otherTokens = other.getUrlData().getTokens();
         final int thisTokensLength = thisTokens.length;
@@ -814,47 +832,155 @@ public class RegexUrlMapping extends AbstractUrlMapping {
             boolean thisTokenIsWildcard = !thisHasMoreTokens || isSingleWildcard(thisTokens[i]);
             boolean otherTokenIsWildcard = !otherHasMoreTokens || isSingleWildcard(otherTokens[i]);
             if (thisTokenIsWildcard && !otherTokenIsWildcard) {
+                if(LOG.isDebugEnabled()) {
+                    LOG.debug("Mapping [{}] has a lower precedence than [{}] because the latter contains more concrete tokens", this.toString(), other.toString());
+                }
                 return -1;
             }
             if (!thisTokenIsWildcard && otherTokenIsWildcard) {
+                if(LOG.isDebugEnabled()) {
+                    LOG.debug("Mapping [{}] has a higher precedence than [{}] because it contains more concrete tokens", this.toString(), other.toString());
+                }
                 return 1;
             }
         }
 
         final int doubleWildcardDiff = otherDoubleWildcardCount - thisDoubleWildcardCount;
-        if (doubleWildcardDiff != 0) return doubleWildcardDiff;
+        if (doubleWildcardDiff != 0) {
+            if(LOG.isDebugEnabled()) {
+                if(doubleWildcardDiff > 0) {
+                    LOG.debug("Mapping [{}] has a higher precedence than [{}] due containing more double wild cards [{} vs. {}]", this.toString(), other.toString(), thisDoubleWildcardCount, otherDoubleWildcardCount);
+                }
+                else if(doubleWildcardDiff < 0) {
+                    LOG.debug("Mapping [{}] has a lower precedence than [{}] due to the latter containing more double wild cards [{} vs. {}]", this.toString(), other.toString(), thisDoubleWildcardCount, otherDoubleWildcardCount);
+                }
+            }
+            return doubleWildcardDiff;
+        }
 
         final int singleWildcardDiff = otherSingleWildcardCount - thisSingleWildcardCount;
-        if (singleWildcardDiff != 0) return singleWildcardDiff;
+        if (singleWildcardDiff != 0) {
+            if(LOG.isDebugEnabled()) {
+                if(singleWildcardDiff > 0) {
+                    LOG.debug("Mapping [{}] has a higher precedence than [{}] because it contains more single wild card matches [{} vs. {}]", this.toString(), other.toString(), thisSingleWildcardCount, otherSingleWildcardCount);
+                }
+                else if(singleWildcardDiff < 0) {
+                    LOG.debug("Mapping [{}] has a lower precedence than [{}] due to the latter containing more single wild card matches[{} vs. {}]", this.toString(), other.toString(), thisSingleWildcardCount, otherSingleWildcardCount);
+                }
+            }
+            return singleWildcardDiff;
+        }
 
-        int constraintDiff = getAppliedConstraintsCount(this) - getAppliedConstraintsCount(other);
-        if (constraintDiff != 0) return constraintDiff;
+        int thisConstraintCount = getAppliedConstraintsCount(this);
+        int thatConstraintCount = getAppliedConstraintsCount(other);
+        int constraintDiff = thisConstraintCount - thatConstraintCount;
+        if (constraintDiff != 0) {
+            if(LOG.isDebugEnabled()) {
+                if(constraintDiff > 0) {
+                    LOG.debug("Mapping [{}] has a higher precedence than [{}] since it defines more constraints [{} vs. {}]", this.toString(), other.toString(), thisConstraintCount, thatConstraintCount);
+                }
+                else if(constraintDiff < 0) {
+                    LOG.debug("Mapping [{}] has a lower precedence than [{}] since the latter defines more constraints [{} vs. {}]", this.toString(), other.toString(), thisConstraintCount, thatConstraintCount);
+                }
+            }
+            return constraintDiff;
+        }
 
         int allDiff = (thisStaticTokenCount - otherStaticTokenCount) + (thisSingleWildcardCount - otherSingleWildcardCount) + (thisDoubleWildcardCount - otherDoubleWildcardCount);
         if(allDiff != 0) {
+            if(LOG.isDebugEnabled()) {
+                if(allDiff > 0) {
+                    LOG.debug("Mapping [{}] has a higher precedence than [{}] due to the overall diff", this.toString(), other.toString());
+                }
+                else if(allDiff < 0) {
+                    LOG.debug("Mapping [{}] has a lower precedence than [{}] due to the overall diff", this.toString(), other.toString());
+                }
+            }
             return allDiff;
         }
 
         String thisVersion = getVersion();
         String thatVersion = other.getVersion();
         if((thisVersion.equals(thatVersion))) {
-            return 0;
+            return evaluatePluginOrder(other);
         }
         else if(thisVersion.equals(ANY_VERSION) && !thatVersion.equals(ANY_VERSION)) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a lower precedence than [{}] due to version precedence [{} vs {}]", this.toString(), other.toString(), thisVersion, thatVersion);
+            }
             return -1;
         }
         else if(!thisVersion.equals(ANY_VERSION) && thatVersion.equals(ANY_VERSION)) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has a higher precedence than [{}] due to version precedence [{} vs {}]", this.toString(), other.toString(), thisVersion, thatVersion);
+            }
             return 1;
         }
         else {
-            return new VersionComparator().compare(thisVersion, thatVersion);
+            int i = new VersionComparator().compare(thisVersion, thatVersion);
+
+            if(i > 0) {
+                if(LOG.isDebugEnabled()) {
+                    LOG.debug("Mapping [{}] has a higher precedence than [{}] due to version precedence [{} vs. {}]", this.toString(), other.toString(), thisVersion, thatVersion);
+                }
+                return 1;
+            }
+            else if(i < 0) {
+                if(LOG.isDebugEnabled()) {
+                    LOG.debug("Mapping [{}] has a lower precedence than [{}] due to version precedence [{} vs. {}]", this.toString(), other.toString(), thisVersion, thatVersion);
+                }
+                return -1;
+            }
+            else {
+                return evaluatePluginOrder(other);
+            }
+        }
+    }
+
+    private int evaluatePluginOrder(UrlMapping other) {
+        if (isDefinedInPlugin() && !other.isDefinedInPlugin()) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has lower precedence than [{}] because the latter has priority over plugins", this.toString(), other.toString());
+            }
+            return -1;
+        } else if (!isDefinedInPlugin() && other.isDefinedInPlugin()) {
+            if(LOG.isDebugEnabled()) {
+                LOG.debug("Mapping [{}] has higher precedence than [{}] because it has priority over plugins", this.toString(), other.toString());
+            }
+            return 1;
+        } else {
+            if (isDefinedInPlugin()) {
+                if (pluginIndex > other.getPluginIndex()) {
+                    if(LOG.isDebugEnabled()) {
+                        LOG.debug("Mapping [{}] has higher precedence than [{}] because it was loaded after", this.toString(), other.toString());
+                    }
+                    return 1;
+                } else if (pluginIndex < other.getPluginIndex()) {
+                    if(LOG.isDebugEnabled()) {
+                        LOG.debug("Mapping [{}] has lower precedence than [{}] because it was loaded before", this.toString(), other.toString());
+                    }
+                    return -1;
+                } else {
+                    if(LOG.isDebugEnabled()) {
+                        LOG.debug("Mapping [{}] has equal precedence with mapping [{}]", this.toString(), other.toString());
+                    }
+                    return 0;
+                }
+            } else {
+                if(LOG.isDebugEnabled()) {
+                    LOG.debug("Mapping [{}] has equal precedence with mapping [{}]", this.toString(), other.toString());
+                }
+                return 0;
+            }
         }
     }
 
     private int getAppliedConstraintsCount(UrlMapping mapping) {
         int count = 0;
-        for (ConstrainedProperty prop : mapping.getConstraints()) {
-            count += prop.getAppliedConstraints().size();
+        for (Constrained prop : mapping.getConstraints()) {
+            if(prop instanceof ConstrainedProperty) {
+                count += ((ConstrainedProperty)prop).getAppliedConstraints().size();
+            }
         }
         return count;
     }

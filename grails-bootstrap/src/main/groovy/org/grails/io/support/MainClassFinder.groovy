@@ -10,6 +10,7 @@ import groovyjarjarasm.asm.Opcodes
 import groovyjarjarasm.asm.Type
 
 import java.nio.file.Paths
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * @author Graeme Rocher
@@ -24,7 +25,7 @@ class MainClassFinder {
 
     private static final String MAIN_METHOD_NAME = "main"
 
-    static String mainClassName = null
+    static final Map<String, String> mainClasses = new ConcurrentHashMap<>()
 
     /**
      * Searches for the main class relative to the give path that is within the project tree
@@ -33,7 +34,15 @@ class MainClassFinder {
      * @return The name of the main class
      */
     static String searchMainClass(URI path) {
-        if(mainClassName) return mainClassName
+
+        if (!path) {
+            return null
+        }
+
+        def pathStr = path.toString()
+        if(mainClasses.containsKey(pathStr)) {
+            return mainClasses.get(pathStr)
+        }
 
         try {
             File file = path ? Paths.get(path).toFile() : null
@@ -52,6 +61,11 @@ class MainClassFinder {
                 if(rootClassesDir.exists()) {
                     searchDirs << rootClassesDir
                 }
+
+                rootClassesDir = new File(rootDir, "build/classes/groovy/main")
+                if (rootClassesDir.exists()) {
+                    searchDirs << rootClassesDir
+                }
             }
 
             String mainClass = null
@@ -59,6 +73,9 @@ class MainClassFinder {
             for (File dir in searchDirs) {
                 mainClass = findMainClass(dir)
                 if (mainClass) break
+            }
+            if(mainClass != null) {
+                mainClasses.put(pathStr, mainClass)
             }
             return mainClass
         } catch (Throwable e) {
@@ -83,18 +100,24 @@ class MainClassFinder {
     }
 
     static String findMainClass(File rootFolder = BuildSettings.CLASSES_DIR) {
-        if(mainClassName) return mainClassName
         if( rootFolder == null) {
             // try current directory
             rootFolder = new File("build/classes/main")
         }
+
+
+        def rootFolderPath = rootFolder.canonicalPath
+        if(mainClasses.containsKey(rootFolderPath)) {
+            return mainClasses.get(rootFolderPath)
+        }
+
         if (!rootFolder.exists()) {
             return null // nothing to do
         }
         if (!rootFolder.isDirectory()) {
             throw new IllegalArgumentException("Invalid root folder '$rootFolder'")
         }
-        String prefix =  "$rootFolder.absolutePath/"
+        String prefix =  "${rootFolderPath}/"
         def stack = new ArrayDeque<File>()
         stack.push rootFolder
 
@@ -106,7 +129,8 @@ class MainClassFinder {
                     def classReader = new ClassReader(inputStream)
 
                     if (isMainClass(classReader)) {
-                        mainClassName = classReader.getClassName().replace('/', '.').replace('\\', '.')
+                        def mainClassName = classReader.getClassName().replace('/', '.').replace('\\', '.')
+                        mainClasses.put(rootFolderPath, mainClassName)
                         return mainClassName
                     }
                 } finally {

@@ -13,16 +13,19 @@ import grails.spring.BeanBuilder
 import grails.util.Environment
 import grails.util.Holders
 import groovy.transform.CompileStatic
-import groovy.util.logging.Commons
+import groovy.util.logging.Slf4j
 import org.grails.config.NavigableMap
 import org.grails.config.PrefixedMapPropertySource
 import org.grails.config.PropertySourcesConfig
 import org.grails.core.exceptions.GrailsConfigurationException
 import org.grails.core.lifecycle.ShutdownOperations
-import org.grails.dev.support.GrailsSpringLoadedPlugin
+import org.grails.datastore.mapping.model.MappingContext
+import org.grails.plugins.core.CoreConfiguration
 import org.grails.spring.DefaultRuntimeSpringConfiguration
 import org.grails.spring.RuntimeSpringConfigUtilities
 import org.springframework.beans.BeansException
+import org.springframework.beans.factory.BeanFactory
+import org.springframework.beans.factory.config.ConfigurableBeanFactory
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
 import org.springframework.beans.factory.support.BeanDefinitionRegistry
 import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor
@@ -34,12 +37,11 @@ import org.springframework.context.event.ApplicationContextEvent
 import org.springframework.context.event.ContextClosedEvent
 import org.springframework.context.event.ContextRefreshedEvent
 import org.springframework.core.convert.converter.Converter
+import org.springframework.core.convert.support.ConfigurableConversionService
 import org.springframework.core.env.AbstractEnvironment
 import org.springframework.core.env.ConfigurableEnvironment
 import org.springframework.core.env.EnumerablePropertySource
-import org.springframework.core.env.MapPropertySource
-import org.springframework.core.env.PropertySource
-import org.springframework.util.ClassUtils
+import org.springframework.core.io.Resource
 
 /**
  * A {@link BeanDefinitionRegistryPostProcessor} that enhances any ApplicationContext with plugin manager capabilities
@@ -48,7 +50,7 @@ import org.springframework.util.ClassUtils
  * @since 3.0
  */
 @CompileStatic
-@Commons
+@Slf4j
 class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProcessor, ApplicationContextAware, ApplicationListener<ApplicationContextEvent> {
     static final boolean RELOADING_ENABLED = Environment.isReloadingAgentEnabled()
 
@@ -70,7 +72,7 @@ class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProces
             this.applicationClass = null
         }
         this.classes = classes != null ? classes : [] as Class[]
-        grailsApplication = new DefaultGrailsApplication()
+        grailsApplication = applicationClass != null ? new DefaultGrailsApplication(applicationClass) : new DefaultGrailsApplication()
         pluginManager = new DefaultGrailsPluginManager(grailsApplication)
         if(applicationContext != null) {
             setApplicationContext(applicationContext)
@@ -81,6 +83,7 @@ class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProces
         if(applicationContext == null) {
             throw new IllegalStateException("ApplicationContext should not be null")
         }
+        Environment.setInitializing(true)
         grailsApplication.applicationContext = applicationContext
         grailsApplication.mainContext = applicationContext
         customizePluginManager(pluginManager)
@@ -112,16 +115,23 @@ class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProces
 
     protected void loadApplicationConfig() {
         org.springframework.core.env.Environment environment = applicationContext.getEnvironment()
+        ConfigurableConversionService conversionService = null
         if(environment instanceof ConfigurableEnvironment) {
             if(environment instanceof AbstractEnvironment) {
-                def cs = environment.getConversionService()
-                cs.addConverter(new Converter<NavigableMap.NullSafeNavigator, String>() {
+                conversionService = environment.getConversionService()
+                conversionService.addConverter(new Converter<String, Resource>() {
+                    @Override
+                    public Resource convert(String source) {
+                        return applicationContext.getResource(source);
+                    }
+                });
+                conversionService.addConverter(new Converter<NavigableMap.NullSafeNavigator, String>() {
                     @Override
                     public String convert(NavigableMap.NullSafeNavigator source) {
                         return null;
                     }
                 });
-                cs.addConverter(new Converter<NavigableMap.NullSafeNavigator, Object>() {
+                conversionService.addConverter(new Converter<NavigableMap.NullSafeNavigator, Object>() {
                     @Override
                     public Object convert(NavigableMap.NullSafeNavigator source) {
                         return null;
@@ -141,7 +151,11 @@ class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProces
                     }
                 }
             }
-            ((DefaultGrailsApplication)grailsApplication).config = new PropertySourcesConfig(propertySources)
+            def config = new PropertySourcesConfig(propertySources)
+            if(conversionService != null) {
+                config.setConversionService( conversionService )
+            }
+            ((DefaultGrailsApplication)grailsApplication).config = config
         }
     }
 
@@ -196,11 +210,17 @@ class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProces
 
     @Override
     void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
-        beanFactory.registerSingleton(GrailsApplication.APPLICATION_ID, grailsApplication)
-        beanFactory.registerSingleton(GrailsPluginManager.BEAN_NAME, pluginManager)
-
-        if(reloadingEnabled) {
-            GrailsSpringLoadedPlugin.register(pluginManager)
+        BeanFactory parentBeanFactory = beanFactory.getParentBeanFactory()
+        if (parentBeanFactory instanceof ConfigurableBeanFactory) {
+            ConfigurableBeanFactory configurableBeanFactory = parentBeanFactory
+            configurableBeanFactory.registerSingleton(GrailsApplication.APPLICATION_ID, grailsApplication)
+            configurableBeanFactory.registerSingleton(GrailsPluginManager.BEAN_NAME, pluginManager)
+            parentBeanFactory.getBean(CoreConfiguration).setChildContext(
+                    (ConfigurableApplicationContext)applicationContext
+            )
+        } else {
+            beanFactory.registerSingleton(GrailsApplication.APPLICATION_ID, grailsApplication)
+            beanFactory.registerSingleton(GrailsPluginManager.BEAN_NAME, pluginManager)
         }
     }
 
@@ -219,45 +239,47 @@ class GrailsApplicationPostProcessor implements BeanDefinitionRegistryPostProces
 
     @Override
     void onApplicationEvent(ApplicationContextEvent event) {
-        def context = event.applicationContext
+        ApplicationContext context = event.applicationContext
 
-        def lifeCycleBeans = context.getBeansOfType(GrailsApplicationLifeCycle).values()
-        if(event instanceof ContextRefreshedEvent) {
-            pluginManager.setApplicationContext(context)
-            pluginManager.doDynamicMethods()
-            for(GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
-                lifeCycle.doWithDynamicMethods()
-            }
-            pluginManager.doPostProcessing(context)
-            for(GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
-                lifeCycle.doWithApplicationContext()
-            }
-            Holders.pluginManager = pluginManager
-            Map<String,Object> eventMap = [:]
-            eventMap.put('source', pluginManager)
+        if (!applicationContext || applicationContext == context) {
+            // Only act if the event is for our context
+            Collection<GrailsApplicationLifeCycle> lifeCycleBeans = context.getBeansOfType(GrailsApplicationLifeCycle).values()
+            if (event instanceof ContextRefreshedEvent) {
+                if (context.containsBean("grailsDomainClassMappingContext")) {
+                    grailsApplication.setMappingContext(
+                        context.getBean("grailsDomainClassMappingContext", MappingContext)
+                    )
+                }
+                Environment.setInitializing(false)
+                pluginManager.setApplicationContext(context)
+                pluginManager.doDynamicMethods()
+                for (GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
+                    lifeCycle.doWithDynamicMethods()
+                }
+                pluginManager.doPostProcessing(context)
+                for (GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
+                    lifeCycle.doWithApplicationContext()
+                }
+                Holders.pluginManager = pluginManager
+                Map<String, Object> eventMap = [:]
+                eventMap.put('source', pluginManager)
 
-            for(GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
-                lifeCycle.onStartup(eventMap)
-            }
-        }
-        else if(event instanceof ContextClosedEvent) {
-            pluginManager.shutdown()
-            Map<String,Object> eventMap = [:]
-            eventMap.put('source', pluginManager)
-            for(GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
-                lifeCycle.onShutdown(eventMap)
-            }
-            ShutdownOperations.runOperations()
-            Holders.clear()
-            if(reloadingEnabled) {
-                try {
-                    GrailsSpringLoadedPlugin.unregister()
-                } catch (Throwable e) {
-                    // ignore
+                pluginManager.onStartup(eventMap)
+                for (GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
+                    lifeCycle.onStartup(eventMap)
                 }
             }
-
-            GrailsApp.setDevelopmentModeActive(false)
+            else if(event instanceof ContextClosedEvent) {
+                pluginManager.shutdown()
+                Map<String, Object> eventMap = [:]
+                eventMap.put('source', pluginManager)
+                for (GrailsApplicationLifeCycle lifeCycle in lifeCycleBeans) {
+                    lifeCycle.onShutdown(eventMap)
+                }
+                ShutdownOperations.runOperations()
+                Holders.clear()
+                GrailsApp.setDevelopmentModeActive(false)
+            }
         }
     }
 

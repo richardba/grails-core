@@ -50,7 +50,9 @@ public class GrailsWebRequestFilter extends OncePerRequestFilter implements Appl
             throws ServletException, IOException {
 
         LocaleContextHolder.setLocale(request.getLocale());
-        boolean isIncludeOrForward = WebUtils.isForward(request) || WebUtils.isInclude(request);
+        response = new OutputAwareHttpServletResponse(response);
+
+        boolean isIncludeOrForward = WebUtils.isForwardOrInclude(request);
         GrailsWebRequest previous = isIncludeOrForward ? GrailsWebRequest.lookup(request) : null;
         GrailsWebRequest webRequest = new GrailsWebRequest(request, response, getServletContext());
         configureParameterCreationListeners(webRequest);
@@ -62,7 +64,7 @@ public class GrailsWebRequestFilter extends OncePerRequestFilter implements Appl
         try {
             WebUtils.storeGrailsWebRequest(webRequest);
 
-            if(!WebUtils.isForward(request)) {
+            if(!isIncludeOrForward) {
                 // Set the flash scope instance to its next state. We do
                 // this here so that the flash is available from Grails
                 // filters in a valid state.

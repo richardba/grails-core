@@ -16,12 +16,12 @@
 package org.grails.plugins;
 
 import grails.artefact.Enhanced;
+import grails.plugins.Plugin;
 import grails.plugins.PluginFilter;
 import org.grails.config.NavigableMap;
 import grails.plugins.GrailsPlugin;
 import grails.plugins.GrailsPluginManager;
 import grails.plugins.GrailsVersionUtils;
-import grails.util.BuildScope;
 import grails.util.Environment;
 import grails.util.GrailsNameUtils;
 import grails.util.Metadata;
@@ -43,7 +43,7 @@ import org.apache.commons.logging.LogFactory;
 import grails.core.ArtefactHandler;
 import grails.core.GrailsApplication;
 
-import org.grails.core.legacy.LegacyGrailsApplication;
+import org.grails.plugins.support.WatchPattern;
 import org.grails.spring.RuntimeSpringConfiguration;
 import org.grails.io.support.GrailsResourceUtils;
 
@@ -71,7 +71,7 @@ import org.springframework.util.StringUtils;
  * @author Graeme Rocher
  * @since 0.4
  */
-public abstract class AbstractGrailsPluginManager implements GrailsPluginManager, org.codehaus.groovy.grails.plugins.GrailsPluginManager {
+public abstract class AbstractGrailsPluginManager implements GrailsPluginManager {
 
     private static final Log LOG = LogFactory.getLog(AbstractGrailsPluginManager.class);
     private static final String BLANK = "";
@@ -87,7 +87,7 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
     protected ApplicationContext applicationContext;
     protected Map<String, GrailsPlugin> failedPlugins = new HashMap<String, GrailsPlugin>();
     protected boolean loadCorePlugins = true;
-    
+
     private static final String CONFIG_BINDING_USER_HOME = "userHome";
     private static final String CONFIG_BINDING_GRAILS_HOME = "grailsHome";
     private static final String CONFIG_BINDING_APP_NAME = "appName";
@@ -153,12 +153,6 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
                 converterRegistry = (ConverterRegistry)existingConversionService;
             }
 
-            converterRegistry.addConverter(new Converter<GrailsApplication, org.codehaus.groovy.grails.commons.GrailsApplication>() {
-                @Override
-                public org.codehaus.groovy.grails.commons.GrailsApplication convert(GrailsApplication source) {
-                    return new LegacyGrailsApplication(source);
-                }
-            });
             converterRegistry.addConverter(new Converter<NavigableMap.NullSafeNavigator, Object>() {
                 @Override
                 public Object convert(NavigableMap.NullSafeNavigator source) {
@@ -311,7 +305,15 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
                 if(isPluginDisabledForProfile(plugin)) continue;
                 for (Class<?> artefact : plugin.getProvidedArtefacts()) {
                     String shortName = GrailsNameUtils.getShortName(artefact);
-                    if (!isAlreadyRegistered(app, artefact, shortName)) {
+                    if (artefact.getName().equals(shortName)) {
+                        LOG.warn("Plugin " + plugin.getName() + " has an artefact " + shortName + " without a package name " +
+                                "This could lead to artefacts being excluded from the application");
+                        if (app.getClassForName(shortName) != null) {
+                            LOG.error("Plugin " + plugin.getName() + " has an artefact " + shortName + " that is being excluded from " +
+                                    "the application because another artefact exists with the same name without a package defined.");
+                        }
+                    }
+                    if (!isAlreadyRegistered(app, artefact)) {
                         app.addOverridableArtefact(artefact);
                     }
                 }
@@ -319,8 +321,8 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
         }
     }
 
-    private boolean isAlreadyRegistered(GrailsApplication app, Class<?> artefact, String shortName) {
-        return app.getClassForName(shortName) != null || app.getClassForName(artefact.getName()) != null;
+    private boolean isAlreadyRegistered(GrailsApplication app, Class<?> artefact) {
+        return app.getClassForName(artefact.getName()) != null;
     }
 
     public void doArtefactConfiguration() {
@@ -335,6 +337,14 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
 
     protected boolean isPluginDisabledForProfile(GrailsPlugin plugin) {
         return applicationContext != null && !plugin.isEnabled(applicationContext.getEnvironment().getActiveProfiles());
+    }
+
+    public void onStartup(Map<String, Object> event) {
+        for (GrailsPlugin plugin : pluginList) {
+            if (plugin.getInstance() instanceof Plugin) {
+                ((Plugin)plugin.getInstance()).onStartup(event);
+            }
+        }
     }
 
     public void shutdown() {
@@ -361,11 +371,6 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
         // no-op
     }
 
-    public boolean supportsCurrentBuildScope(String pluginName) {
-        GrailsPlugin plugin = getGrailsPlugin(pluginName);
-        return plugin == null || plugin.supportsScope(BuildScope.getCurrent());
-    }
-
     public void setLoadCorePlugins(boolean shouldLoadCorePlugins) {
         loadCorePlugins = shouldLoadCorePlugins;
     }
@@ -389,6 +394,33 @@ public abstract class AbstractGrailsPluginManager implements GrailsPluginManager
         if (plugin != null) {
             if(!plugin.isEnabled(applicationContext.getEnvironment().getActiveProfiles())) return;
             plugin.notifyOfEvent(GrailsPlugin.EVENT_ON_CHANGE, aClass);
+        }
+        else {
+            String classNameAsPath = aClass.getName().replace('.', File.separatorChar);
+            String groovyClass = classNameAsPath + ".groovy";
+            String javaClass = classNameAsPath + ".java";
+            for (GrailsPlugin grailsPlugin : pluginList) {
+                List<WatchPattern> watchPatterns = grailsPlugin.getWatchedResourcePatterns();
+                if(watchPatterns != null) {
+                    for (WatchPattern watchPattern : watchPatterns) {
+                        File parent = watchPattern.getDirectory();
+                        String extension = watchPattern.getExtension();
+
+                        if(parent != null && extension != null)  {
+                            File f = new File(parent, groovyClass);
+                            if(f.exists() && f.getName().endsWith(extension)) {
+                                grailsPlugin.notifyOfEvent(GrailsPlugin.EVENT_ON_CHANGE, aClass);
+                            }
+                            else {
+                                f = new File(parent, javaClass);
+                                if(f.exists() && f.getName().endsWith(extension)) {
+                                    grailsPlugin.notifyOfEvent(GrailsPlugin.EVENT_ON_CHANGE, aClass);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -22,7 +22,12 @@ import groovy.transform.CompileStatic
 import groovy.transform.stc.ClosureParams
 import groovy.transform.stc.FromString
 import groovy.transform.stc.SimpleType
-import org.gradle.tooling.*
+import org.gradle.tooling.BuildAction
+import org.gradle.tooling.BuildActionExecuter
+import org.gradle.tooling.BuildLauncher
+import org.gradle.tooling.GradleConnector
+import org.gradle.tooling.LongRunningOperation
+import org.gradle.tooling.ProjectConnection
 import org.gradle.tooling.internal.consumer.DefaultCancellationTokenSource
 import org.grails.build.logging.GrailsConsoleErrorPrintStream
 import org.grails.build.logging.GrailsConsolePrintStream
@@ -39,63 +44,34 @@ import org.grails.cli.profile.ProjectContext
 @CompileStatic
 class GradleUtil {
     private static final boolean DEFAULT_SUPPRESS_OUTPUT = true
-    private static ProjectConnection preparedConnection = null
-    private static File preparedConnectionBaseDir = null
-
-    public static ProjectConnection refreshConnection(File baseDir) {
-        preparedConnection = openGradleConnection(baseDir)
-        preparedConnectionBaseDir = baseDir.getAbsoluteFile()
-
-        try {
-            Runtime.addShutdownHook {
-                try {
-                    Thread.start {
-                        clearPreparedConnection()
-                    }.join(1000)
-                } catch (Throwable e) {
-                    // ignore
-                }
-
-            }
-        } catch (e) {
-            // ignore
-        }
-        return preparedConnection
-    }
-
-    public static ProjectConnection prepareConnection(File baseDir) {
-        if (preparedConnection == null || preparedConnectionBaseDir != baseDir.getAbsoluteFile()) {
-            refreshConnection(baseDir)
-        }
-        return preparedConnection
-    }
-
-    public static clearPreparedConnection() {
-        if (preparedConnection != null) {
-            try {
-                Thread.start {
-                    preparedConnection?.close()
-                }.join(2000)
-            } catch (Throwable e) {
-            }
-
-            preparedConnection = null
-            preparedConnectionBaseDir = null
-        }
-    }
 
     public static ProjectConnection openGradleConnection(File baseDir) {
         GradleConnector gradleConnector = GradleConnector.newConnector().forProjectDirectory(baseDir)
         if (System.getenv("GRAILS_GRADLE_HOME")) {
             gradleConnector.useInstallation(new File(System.getenv("GRAILS_GRADLE_HOME")))
+        } else {
+            def userHome = System.getProperty("user.home")
+            if (userHome) {
+                File gradleFile = new File(baseDir, "gradle.properties")
+                if (gradleFile.exists() && gradleFile.canRead()) {
+                    Properties gradleProperties = new Properties()
+                    gradleProperties.load(gradleFile.newInputStream())
+                    String gradleWrapperVersion = gradleProperties.getProperty("gradleWrapperVersion")
+
+                    File sdkManGradle = new File("$userHome/.sdkman/candidates/gradle/$gradleWrapperVersion")
+                    if (sdkManGradle.exists() && sdkManGradle.isDirectory()) {
+                        gradleConnector.useInstallation(sdkManGradle)
+                    }
+                }
+            }
         }
+
         gradleConnector.connect()
     }
 
     public static <T> T withProjectConnection(File baseDir, boolean suppressOutput = DEFAULT_SUPPRESS_OUTPUT,
                                               @ClosureParams(value = SimpleType.class, options = "org.gradle.tooling.ProjectConnection") Closure<T> closure) {
-        boolean preparedConnectionExisted = preparedConnection != null
-        ProjectConnection projectConnection = prepareConnection(baseDir)
+        ProjectConnection projectConnection = openGradleConnection(baseDir)
         try {
             if (suppressOutput) {
                 SystemOutErrCapturer.withNullOutput {
@@ -107,8 +83,7 @@ class GradleUtil {
                 }
             }
         } finally {
-            if (!preparedConnectionExisted)
-                clearPreparedConnection()
+            projectConnection.close();
         }
     }
 

@@ -1,19 +1,24 @@
 package grails.test.mixin
 
 import grails.persistence.Entity
+import grails.testing.gorm.DomainUnitTest
+import spock.lang.Specification
 
-@TestFor(Uniqueable)
-@Mock(Uniqueable)
-class DomainClassWithCustomValidatorTests {
+class DomainClassWithCustomValidatorTests extends Specification implements DomainUnitTest<Uniqueable> {
 
     void testThereCanBeOnlyOneSomething() {
+        when:
         def uni = new Uniqueable()
-        assert uni.save(flush:true)
 
+        then:
+        uni.save(flush:true)
+
+        when:
         def uni2 = new Uniqueable()
 
+        then:
         // checks there is no stack over flow
-        uni2.save()
+        uni2.save() == null
     }
 }
 
@@ -22,11 +27,11 @@ class Uniqueable {
     String word = "something"
 
     static constraints = {
-        word validator: onlyOneSomething
+        word validator: Uniqueable.onlyOneSomething
     }
 
     static onlyOneSomething = { value, obj ->
-        if (value == "something" && Uniqueable.countByWordAndIdNot("something", obj.id)) {
+        if (value == "something" && Uniqueable.countByWord("something")) {
             return "unique"
         }
     }

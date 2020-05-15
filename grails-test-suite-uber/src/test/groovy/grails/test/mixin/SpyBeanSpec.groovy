@@ -1,29 +1,21 @@
 package grails.test.mixin
 
-import grails.databinding.SimpleMapDataBindingSource;
-import grails.databinding.converters.ValueConverter;
-import grails.test.mixin.support.GrailsUnitTestMixin
-import grails.test.runtime.FreshRuntime
-
+import grails.databinding.SimpleMapDataBindingSource
+import grails.databinding.converters.ValueConverter
 import org.grails.spring.beans.factory.InstanceFactoryBean
-import org.grails.plugins.databinding.DataBindingGrailsPlugin
+import org.grails.testing.GrailsUnitTest
 import spock.lang.Specification
 
 /**
  * @author Lari Hotari
  */
-@FreshRuntime
-@TestMixin(GrailsUnitTestMixin)
-class SpyBeanSpec extends Specification {
-    def myAddressValueConverter=Spy(MyAddressValueConverter)
-    def doWithSpring = {
-        def plugin = new DataBindingGrailsPlugin()
-        plugin.grailsApplication = delegate.application
-        def otherClosure= plugin.doWithSpring().clone()
-        otherClosure.delegate=delegate
-        otherClosure.call()
-        myAddressValueConverter(InstanceFactoryBean, myAddressValueConverter, MyAddressValueConverter)
-    }
+class SpyBeanSpec extends Specification implements GrailsUnitTest {
+
+    def myAddressValueConverterMock =Spy(MyAddressValueConverter)
+
+    Closure doWithSpring() {{ ->
+        myAddressValueConverter(InstanceFactoryBean, myAddressValueConverterMock, MyAddressValueConverter)
+    }}
 
     def "it's possible to use Spy instances as beans as well"() {
         given:
@@ -32,9 +24,9 @@ class SpyBeanSpec extends Specification {
         when:
         binder.bind person, [name:'Lari', address:'Espoo,Finland'] as SimpleMapDataBindingSource
         then:
-        1 * myAddressValueConverter.canConvert('Espoo,Finland')
-        1 * myAddressValueConverter.convert('Espoo,Finland')
-        0 * myAddressValueConverter._
+        1 * myAddressValueConverterMock.canConvert('Espoo,Finland')
+        1 * myAddressValueConverterMock.convert('Espoo,Finland')
+        0 * myAddressValueConverterMock._
         person.address.city=='Espoo'
         person.address.country=='Finland'
     }

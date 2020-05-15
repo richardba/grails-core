@@ -15,8 +15,6 @@
  */
 package grails.plugins;
 
-import grails.config.Config;
-import grails.util.BuildScope;
 import grails.util.Environment;
 import groovy.lang.GroovyObject;
 
@@ -50,7 +48,7 @@ import org.springframework.core.type.filter.TypeFilter;
  * @see org.springframework.beans.factory.support.BeanDefinitionRegistry
  */
 @SuppressWarnings("rawtypes")
-public interface GrailsPlugin extends ApplicationContextAware, Comparable, GrailsPluginInfo, org.codehaus.groovy.grails.plugins.GrailsPlugin {
+public interface GrailsPlugin extends ApplicationContextAware, Comparable, GrailsPluginInfo {
 
     int EVENT_ON_CHANGE = 0;
     int EVENT_ON_CONFIG_CHANGE = 1;
@@ -196,24 +194,10 @@ public interface GrailsPlugin extends ApplicationContextAware, Comparable, Grail
 
 
     /**
-     * Makes the plugin excluded for a particular BuildScope
-     * @param buildScope The BuildScope
-     */
-    void addExclude(BuildScope buildScope);
-
-    /**
      * Makes the plugin excluded for a particular Environment
      * @param env The Environment
      */
     void addExclude(Environment env);
-
-    /**
-     * Return whether this plugin supports the given PluginScope
-     *
-     * @param buildScope The PluginScope
-     * @return true if it does
-     */
-    boolean supportsScope(BuildScope buildScope);
 
     /**
      * Returns whether this plugin supports the given environment name
@@ -229,7 +213,10 @@ public interface GrailsPlugin extends ApplicationContextAware, Comparable, Grail
 
     /**
      * Write some documentation to the DocumentationContext
+     * @deprecated Dynamic document generation no longer supported
+     * @param text
      */
+    @Deprecated
     void doc(String text);
 
     /**

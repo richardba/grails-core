@@ -58,6 +58,7 @@ public class PrefixedConfig implements Config {
     }
 
     @Override
+    @Deprecated
     public Map<String, Object> flatten() {
         Map<String, Object> flattened = delegate.flatten();
         Map<String, Object> map = new LinkedHashMap<String, Object>(flattened.size());
@@ -183,11 +184,6 @@ public class PrefixedConfig implements Config {
     @Override
     public <T> T getProperty(String key, Class<T> targetType, T defaultValue) {
         return delegate.getProperty(formulateKey(key), targetType, defaultValue);
-    }
-
-    @Override
-    public <T> Class<T> getPropertyAsClass(String key, Class<T> targetType) {
-        return delegate.getPropertyAsClass(formulateKey(key), targetType);
     }
 
     @Override

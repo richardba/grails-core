@@ -15,6 +15,8 @@
  */
 package org.grails.plugins.web.rest.render
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import grails.rest.render.ContainerRenderer
 import grails.rest.render.Renderer
 import grails.rest.render.RendererRegistry
@@ -37,8 +39,6 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.validation.BeanPropertyBindingResult
 import org.springframework.validation.Errors
 
-import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
-
 /**
  * Default implementation of the {@link RendererRegistry} interface
  *
@@ -49,10 +49,11 @@ import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
 class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, RendererCacheKey> implements RendererRegistry{
 
     private Map<ContainerRendererCacheKey, Renderer> containerRenderers = new ConcurrentHashMap<>()
-    private Map<ContainerRendererCacheKey, Renderer<?>> containerRendererCache = new ConcurrentLinkedHashMap.Builder<ContainerRendererCacheKey, Renderer<?>>()
+    private Cache<ContainerRendererCacheKey, Renderer<?>> containerRendererCache = Caffeine.newBuilder()
         .initialCapacity(500)
-        .maximumWeightedCapacity(1000)
+        .maximumSize(1000)
         .build()
+
     @Autowired(required = false)
     GrailsConventionGroovyPageLocator groovyPageLocator
     @Autowired(required = false)
@@ -116,7 +117,7 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
         for(MimeType mt in renderer.mimeTypes) {
             def key = new ContainerRendererCacheKey(renderer.getTargetType(), objectType, mt)
 
-            containerRendererCache.remove(key)
+            containerRendererCache.invalidate(key)
             containerRenderers.put(key, renderer)
         }
     }
@@ -130,14 +131,14 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
     def <C, T> Renderer<C> findContainerRenderer(MimeType mimeType, Class<C> containerType, T object) {
         if (object == null) return null
         if (proxyHandler != null) {
-            object = proxyHandler.unwrapIfProxy(object)
+            object = (T)proxyHandler.unwrapIfProxy(object)
         }
 
         def originalTargetClass = object instanceof Class ? (Class) object : object.getClass()
         originalTargetClass = getTargetClassForContainer(originalTargetClass, object)
         def originalKey = new ContainerRendererCacheKey(containerType, originalTargetClass, mimeType)
 
-        Renderer<C> renderer = (Renderer<C>)containerRendererCache.get(originalKey)
+        Renderer<C> renderer = (Renderer<C>)containerRendererCache.getIfPresent(originalKey)
 
         if (renderer == null) {
             def key = originalKey
@@ -153,7 +154,8 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
                     renderer = containerRenderers.get(key)
                     if (renderer != null) break
                     else {
-                        final containerInterfaces = GrailsClassUtils.getAllInterfacesForClass(containerType)
+                        //TODO: Remove explicit type-cast (Class<?>) once GROOVY-9460 is fixed
+                        final containerInterfaces = GrailsClassUtils.getAllInterfacesForClass((Class<?>) containerType)
                         for(Class i in containerInterfaces) {
                             key = new ContainerRendererCacheKey(i, targetClass, mimeType)
                             renderer = containerRenderers.get(key)
@@ -166,6 +168,7 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
             }
 
             if (renderer == null) {
+                //TODO: Remove explicit type-cast (Class<?>) once GROOVY-9460 is fixed
                 final interfaces = GrailsClassUtils.getAllInterfacesForClass(originalTargetClass)
             outer:
                 for(Class i in interfaces) {
@@ -173,7 +176,8 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
                     renderer = containerRenderers.get(key)
                     if (renderer) break
                     else {
-                        final containerInterfaces = GrailsClassUtils.getAllInterfacesForClass(containerType)
+                        //TODO: Remove explicit type-cast (Class<?>) once GROOVY-9460 is fixed
+                        final containerInterfaces = GrailsClassUtils.getAllInterfacesForClass((Class<?>) containerType)
                         for(Class ci in containerInterfaces) {
                             key = new ContainerRendererCacheKey(ci, i, mimeType)
                             renderer = containerRenderers.get(key)
@@ -198,7 +202,7 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
         } else if (object instanceof Iterable) {
             if (object) {
                 final iterator = object.iterator()
-                final first = iterator.next()
+                def first = iterator.next()
                 if (first) {
                     if (proxyHandler != null) {
                         first = proxyHandler.unwrapIfProxy(first)
@@ -208,7 +212,7 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
             }
         } else if (object instanceof Map) {
             if (object) {
-                final first = object.values().iterator().next()
+                def first = object.values().iterator().next()
                 if (first) {
                     if (proxyHandler != null) {
                         first = proxyHandler.unwrapIfProxy(first)
@@ -217,7 +221,7 @@ class DefaultRendererRegistry extends ClassAndMimeTypeRegistry<Renderer, Rendere
                 }
             }
         } else if (object instanceof BeanPropertyBindingResult) {
-            final target = ((BeanPropertyBindingResult) object).target
+            def target = ((BeanPropertyBindingResult) object).target
             if (target) {
                 if (proxyHandler != null) {
                     target = proxyHandler.unwrapIfProxy(target)

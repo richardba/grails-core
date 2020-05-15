@@ -15,16 +15,14 @@
  */
 package grails.rest
 
-import grails.web.mapping.LinkGenerator
-import org.springframework.beans.factory.annotation.Autowired
-
-import static org.springframework.http.HttpStatus.*
 import grails.artefact.Artefact
-import grails.transaction.Transactional
+import grails.gorm.transactions.ReadOnly
+import grails.gorm.transactions.Transactional
 import grails.util.GrailsNameUtils
-
 import grails.web.http.HttpHeaders
 import org.springframework.http.HttpStatus
+
+import static org.springframework.http.HttpStatus.*
 
 /**
  * Base class that can be extended to get the basic CRUD operations needed for a RESTful API.
@@ -33,9 +31,9 @@ import org.springframework.http.HttpStatus
  * @since 2.3
  */
 @Artefact("Controller")
-@Transactional(readOnly = true)
+@ReadOnly
 class RestfulController<T> {
-    static allowedMethods = [save: "POST", update: "PUT", patch: "PATCH", delete: "DELETE"]
+    static allowedMethods = [save: "POST", update: ["PUT", "POST"], patch: "PATCH", delete: "DELETE"]
 
     Class<T> resource
     String resourceName
@@ -104,7 +102,7 @@ class RestfulController<T> {
 
         request.withFormat {
             form multipartForm {
-                flash.message = message(code: 'default.created.message', args: [message(code: "${resourceName}.label".toString(), default: resourceClassName), instance.id])
+                flash.message = message(code: 'default.created.message', args: [classMessageArg, instance.id])
                 redirect instance
             }
             '*' {
@@ -151,6 +149,7 @@ class RestfulController<T> {
 
         instance.properties = getObjectToBind()
 
+        instance.validate()
         if (instance.hasErrors()) {
             transactionStatus.setRollbackOnly()
             respond instance.errors, view:'edit' // STATUS CODE 422
@@ -160,7 +159,7 @@ class RestfulController<T> {
         updateResource instance
         request.withFormat {
             form multipartForm {
-                flash.message = message(code: 'default.updated.message', args: [message(code: "${resourceClassName}.label".toString(), default: resourceClassName), instance.id])
+                flash.message = message(code: 'default.updated.message', args: [classMessageArg, instance.id])
                 redirect instance
             }
             '*'{
@@ -189,11 +188,11 @@ class RestfulController<T> {
             return
         }
 
-        instance.delete flush:true
+        deleteResource instance
 
         request.withFormat {
             form multipartForm {
-                flash.message = message(code: 'default.deleted.message', args: [message(code: "${resourceClassName}.label".toString(), default: resourceClassName), instance.id])
+                flash.message = message(code: 'default.deleted.message', args: [classMessageArg, instance.id])
                 redirect action:"index", method:"GET"
             }
             '*'{ render status: NO_CONTENT } // NO CONTENT STATUS CODE
@@ -212,18 +211,6 @@ class RestfulController<T> {
         } else {
             return false
         }
-    }
-
-    /**
-     * This method is no longer used.
-     *
-     * @see #getObjectToBind
-     * @return The parameters
-     * @deprecated
-     */
-    @Deprecated
-    protected Map getParametersToBind() {
-        params
     }
     
     /**
@@ -292,7 +279,7 @@ class RestfulController<T> {
     protected void notFound() {
         request.withFormat {
             form multipartForm {
-                flash.message = message(code: 'default.not.found.message', args: [message(code: '${propertyName}.label', default: '${className}'), params.id])
+                flash.message = message(code: 'default.not.found.message', args: [classMessageArg, params.id])
                 redirect action: "index", method: "GET"
             }
             '*'{ render status: NOT_FOUND }
@@ -317,5 +304,18 @@ class RestfulController<T> {
      */
     protected T updateResource(T resource) {
         saveResource resource
+    }
+
+    /**
+     * Deletes a resource
+     * 
+     * @param resource The resource to be deleted
+     */
+    protected void deleteResource(T resource) {
+        resource.delete flush: true
+    }
+
+    protected String getClassMessageArg() {
+        message(code: "${resourceName}.label".toString(), default: resourceClassName)
     }
 }

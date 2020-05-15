@@ -17,7 +17,10 @@ package org.grails.cli.gradle.cache
 
 import grails.util.BuildSettings
 import groovy.transform.CompileStatic
+import org.gradle.tooling.GradleConnector
 import org.gradle.tooling.ProjectConnection
+import org.gradle.tooling.internal.consumer.ConnectorServices
+import org.gradle.tooling.internal.consumer.DefaultGradleConnector
 import org.grails.cli.gradle.GradleUtil
 import org.grails.cli.profile.ProjectContext
 
@@ -38,7 +41,6 @@ abstract class CachedGradleOperation<T> implements Callable<T> {
     CachedGradleOperation(ProjectContext projectContext, String fileName) {
         this.fileName = fileName
         this.projectContext = projectContext
-        GradleUtil.refreshConnection(projectContext.baseDir)
     }
 
     abstract T readFromCached(File f)
@@ -62,9 +64,24 @@ abstract class CachedGradleOperation<T> implements Callable<T> {
             throw e
         }
 
-        def data = GradleUtil.withProjectConnection(projectContext.baseDir, true) { ProjectConnection projectConnection -> readFromGradle(projectConnection) }
-        storeData(data)
-        return data
+        try {
+            ProjectConnection projectConnection = GradleUtil.openGradleConnection(projectContext.baseDir)
+            try {
+                updateStatusMessage()
+                def data = readFromGradle(projectConnection)
+                storeData(data)
+                return data
+            } finally {
+                projectConnection.close()
+            }
+        } finally {
+            DefaultGradleConnector.close()
+            ConnectorServices.reset()
+        }
+    }
+
+    void updateStatusMessage() {
+        // no-op
     }
 
     protected void storeData(T data) {

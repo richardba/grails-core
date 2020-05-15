@@ -1,6 +1,0 @@
-dependencies {
-    compile( project(":grails-web-common") )
-    compile( project(":grails-taglib") )
-
-    testRuntime( project(":grails-spring") )
-}

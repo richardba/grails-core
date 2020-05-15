@@ -14,17 +14,9 @@
  */
 package grails.util;
 
-import groovy.util.XmlSlurper;
-import groovy.util.slurpersupport.GPathResult;
+import org.junit.jupiter.api.AfterEach;
 
-import java.io.IOException;
-import java.io.StringWriter;
-
-import javax.xml.parsers.ParserConfigurationException;
-
-import junit.framework.TestCase;
-
-import org.xml.sax.SAXException;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Tests for the GrailsUtils class.
@@ -32,29 +24,15 @@ import org.xml.sax.SAXException;
  * @author Graeme Rocher
  * @since 0.4
  */
-public class GrailsUtilTests extends TestCase {
+public class GrailsUtilTests {
 
     public void testGrailsVersion() {
-        assertEquals("3.2.0.BUILD-SNAPSHOT", GrailsUtil.getGrailsVersion());
+        // assertEquals("4.1.0.M1", GrailsUtil.getGrailsVersion());
+        assertEquals("4.1.0.BUILD-SNAPSHOT", GrailsUtil.getGrailsVersion());
     }
 
-    @Override
+    @AfterEach
     protected void tearDown() throws Exception {
         System.setProperty(Environment.KEY, "");
-    }
-
-    @SuppressWarnings("deprecation")
-    public void testWriteSlurperResult() throws SAXException, ParserConfigurationException, IOException {
-        String testXml = "<root><books><book isbn=\"45734957\">" +
-                         "<title>Misery</title><author>Stephen King</author>" +
-                         "</book></books></root>";
-        GPathResult result = new XmlSlurper().parseText(testXml);
-
-        StringWriter output = new StringWriter(testXml.length() + 20);
-        GrailsUtil.writeSlurperResult(result, output);
-
-        testXml = testXml.replaceAll("<root>", "<root xmlns='http://java.sun.com/xml/ns/j2ee'>");
-        testXml = testXml.replace('"', '\'');
-        assertEquals(testXml, output.toString());
     }
 }

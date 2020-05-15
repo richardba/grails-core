@@ -23,13 +23,16 @@ import org.codehaus.groovy.control.MultipleCompilationErrorsException;
 import org.codehaus.groovy.runtime.DefaultGroovyMethods;
 import org.grails.io.support.Resource;
 import org.grails.io.support.UrlResource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.lang.management.ManagementFactory;
 import java.net.URL;
+import java.nio.file.Files;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 
@@ -51,7 +54,7 @@ public enum Environment {
     TEST,
 
     /**
-     * For the application data source, primarly for backward compatability for those applications
+     * For the application data source, primarily for backward compatibility for those applications
      * that use ApplicationDataSource.groovy.
      */
     APPLICATION,
@@ -59,10 +62,17 @@ public enum Environment {
     /** A custom environment */
     CUSTOM;
 
+    private static final Supplier<Logger> LOG = SupplierUtil.memoized(() -> LoggerFactory.getLogger(Environment.class));
+
     /**
      * Constant used to resolve the environment via System.getProperty(Environment.KEY)
      */
     public static String KEY = "grails.env";
+    
+    /**
+     * Constant used to resolve the environment via System.getenv(Environment.ENV_KEY).
+     */
+    public static final String ENV_KEY = "GRAILS_ENV";
 
     /**
      * The name of the GRAILS_HOME environment variable
@@ -103,6 +113,11 @@ public enum Environment {
      */
     public static final String INITIALIZING = "grails.env.initializing";
 
+    /**
+     * Whether Grails has been executed standalone via the static void main method and not loaded in via the container
+     */
+    public static final String STANDALONE = "grails.env.standalone";
+
     private static final String PRODUCTION_ENV_SHORT_NAME = "prod";
 
     private static final String DEVELOPMENT_ENVIRONMENT_SHORT_NAME = "dev";
@@ -113,12 +128,14 @@ public enum Environment {
         DEVELOPMENT_ENVIRONMENT_SHORT_NAME, Environment.DEVELOPMENT.getName(),
         PRODUCTION_ENV_SHORT_NAME, Environment.PRODUCTION.getName(),
         TEST_ENVIRONMENT_SHORT_NAME, Environment.TEST.getName());
-    private static Holder<Environment> cachedCurrentEnvironment = new Holder<Environment>("Environment");
+    private static Holder<Environment> cachedCurrentEnvironment = new Holder<>("Environment");
     private static final boolean DEVELOPMENT_MODE = getCurrent() == DEVELOPMENT && BuildSettings.GRAILS_APP_DIR_PRESENT;
     private static boolean initializingState = false;
 
     private static final String GRAILS_IMPLEMENTATION_TITLE = "Grails";
     private static final String GRAILS_VERSION;
+    private static final boolean STANDALONE_DEPLOYED;
+    private static final boolean WAR_DEPLOYED;
 
     static {
         Package p = Environment.class.getPackage();
@@ -162,6 +179,53 @@ public enum Environment {
             }
         }
         GRAILS_VERSION = version;
+
+        URL url = Environment.class.getResource("");
+        if(url != null) {
+
+            String protocol = url.getProtocol();
+            if(protocol.equals("jar")) {
+                String fullPath = url.toString();
+                if(fullPath.contains(IOUtils.RESOURCE_WAR_PREFIX)) {
+                    STANDALONE_DEPLOYED = true;
+                }
+                else {
+                    int i = fullPath.indexOf(IOUtils.RESOURCE_JAR_PREFIX);
+                    if(i > -1) {
+                        fullPath = fullPath.substring(i + IOUtils.RESOURCE_JAR_PREFIX.length());
+                        STANDALONE_DEPLOYED = fullPath.contains(IOUtils.RESOURCE_JAR_PREFIX);
+
+                    }
+                    else {
+                        STANDALONE_DEPLOYED = false;
+                    }
+
+                }
+            }
+            else {
+                STANDALONE_DEPLOYED = false;
+            }
+        }
+        else {
+            STANDALONE_DEPLOYED = false;
+        }
+
+        URL loadedLocation = Environment.class.getClassLoader().getResource(Metadata.FILE);
+        if(loadedLocation != null ) {
+            String path = loadedLocation.getPath();
+            WAR_DEPLOYED = isWebPath(path);
+        }
+        else {
+
+            loadedLocation = Thread.currentThread().getContextClassLoader().getResource(Metadata.FILE);
+            if(loadedLocation != null ) {
+                String path = loadedLocation.getPath();
+                WAR_DEPLOYED = isWebPath(path);
+            }
+            else {
+                WAR_DEPLOYED = false;
+            }
+        }
     }
 
     public static Throwable currentReloadError = null;
@@ -206,16 +270,26 @@ public enum Environment {
      * @return The current environment.
      */
     public static Environment getCurrent() {
+        String envName = getEnvironment();
+
+        Environment env;
+        if(!isBlank(envName)) {
+            env = getEnvironment(envName);
+            if(env != null) {
+                return env;
+            }
+        }
+
+
         Environment current = cachedCurrentEnvironment.get();
         if (current != null) {
             return current;
         }
-
-        return resolveCurrentEnvironment();
+        return cacheCurrentEnvironment();
     }
 
     private static Environment resolveCurrentEnvironment() {
-        String envName = System.getProperty(Environment.KEY);
+        String envName = getEnvironment();
 
         if (isBlank(envName)) {
             Metadata metadata = Metadata.getCurrent();
@@ -243,8 +317,10 @@ public enum Environment {
         return env;
     }
 
-    public static void cacheCurrentEnvironment() {
-        cachedCurrentEnvironment.set(resolveCurrentEnvironment());
+    private static Environment cacheCurrentEnvironment() {
+        Environment env = resolveCurrentEnvironment();
+        cachedCurrentEnvironment.set(env);
+        return env;
     }
 
     /**
@@ -253,6 +329,14 @@ public enum Environment {
      */
     public static Environment getCurrentEnvironment() {
         return getCurrent();
+    }
+
+    /**
+     * Reset the current environment
+     */
+    public static void reset() {
+        cachedCurrentEnvironment.set(null);
+        Metadata.reset();
     }
 
     /**
@@ -271,7 +355,7 @@ public enum Environment {
      * @return True if the development sources are present
      */
     public static boolean isDevelopmentEnvironmentAvailable() {
-        return BuildSettings.GRAILS_APP_DIR_PRESENT ;
+        return BuildSettings.GRAILS_APP_DIR_PRESENT && !isStandaloneDeployed() && !isWarDeployed();
     }
 
     /**
@@ -280,22 +364,96 @@ public enum Environment {
      * @return True if the development sources are present
      */
     public static boolean isDevelopmentRun() {
-        return BuildSettings.GRAILS_APP_DIR_PRESENT && Boolean.getBoolean(RUN_ACTIVE);
+        Environment env = Environment.getCurrent();
+        return isDevelopmentEnvironmentAvailable() && Boolean.getBoolean(RUN_ACTIVE) && (env == Environment.DEVELOPMENT);
     }
+
+    /**
+     * Checks if the run of the app is due to spring dev-tools or not.
+     * @return True if spring-dev-tools restart
+     */
+    public static boolean isDevtoolsRestart() {
+        File pidFile = new File(BuildSettings.TARGET_DIR.toString() + File.separator + ".grailspid");
+        LOG.get().debug("Looking for pid file at: {}", pidFile);
+        boolean isDevToolsRestart = false;
+        try {
+            if(Environment.isDevelopmentMode()) {
+                String pid = ManagementFactory.getRuntimeMXBean().getName();
+                if(pidFile.exists())  {
+                    if(pid.equals(Files.readAllLines(pidFile.toPath()).get(0))) {
+                        LOG.get().debug("spring-dev-tools restart detected.");
+                        isDevToolsRestart = true;
+                    } else {
+                        LOG.get().debug("spring-dev-tools first app start - creating pid file.");
+                        writeDevToolsPidFile(pidFile, pid);
+                    }
+                } else {
+                    LOG.get().debug("spring-dev-tools pid file did not exist.");
+                    writeDevToolsPidFile(pidFile, pid);
+                }
+            }
+        } catch(Exception ex) {
+            LOG.get().error("spring-dev-tools restart detection error: {}", ex);
+        }
+        LOG.get().debug("spring-dev-tools restart: {}", isDevToolsRestart);
+        return isDevToolsRestart;
+    }
+
+    private static void writeDevToolsPidFile(File pidFile, String content) {
+        BufferedWriter writer = null;
+        try {
+            writer = new BufferedWriter(new FileWriter(pidFile));
+            writer.write(content);
+        } catch(Exception ex) {
+            LOG.get().error("spring-dev-tools restart unable to write pid file: {}", ex);
+        } finally {
+            try {
+                if(writer != null) {
+                    writer.flush();
+                    writer.close();
+                }
+            } catch (Exception ignored) { }
+        }
+    }
+
     /**
      * Check whether the application is deployed
      * @return true if is
      */
     public static boolean isWarDeployed() {
-        URL loadedLocation = Environment.class.getClassLoader().getResource(Metadata.FILE);
-        if(loadedLocation != null && loadedLocation.getPath().contains("/WEB-INF/classes")) {
-            return true;
-        }
-        // Workaround for weblogic who repacks files from 'classes' into a new jar under lib/
-        if (loadedLocation != null && loadedLocation.getPath().contains("_wl_cls_gen.jar!/")) {
-            return true;
+        if(!isStandalone()) {
+            return WAR_DEPLOYED;
         }
         return false;
+    }
+
+    private static boolean isWebPath(String path) {
+        // Workaround for weblogic who repacks files from 'classes' into a new jar under lib/
+        return path.contains("/WEB-INF/classes") || path.contains("_wl_cls_gen.jar!/");
+    }
+
+    /**
+     * Whether the application has been executed standalone via static void main.
+     *
+     * This method will return true when the application is executed via `java -jar` or
+     * if the application is run directly via the main method within an IDE
+     *
+     * @return True if it is running standalone outside of a servlet container
+     */
+    public static boolean isStandalone() {
+        return Boolean.getBoolean(STANDALONE);
+    }
+
+    /**
+     * Whether the application is running standalone within a JAR
+     *
+     * This method will return true only if the the application is executed via `java -jar`
+     * and not if it is run via the main method within an IDE
+     *
+     * @return True if it is running standalone outside a servlet container from within a JAR or WAR file
+     */
+    public static boolean isStandaloneDeployed() {
+        return isStandalone() && STANDALONE_DEPLOYED;
     }
 
     /**
@@ -318,7 +476,7 @@ public enum Environment {
      * @return Return true if the environment has been set as a System property
      */
     public static boolean isSystemSet() {
-        return System.getProperty(KEY) != null;
+        return getEnvironment() != null;
     }
 
     /**
@@ -552,11 +710,25 @@ public enum Environment {
             return reloadingAgentEnabled;
         }
         try {
-            Class.forName("org.springsource.loaded.TypeRegistry");
+            Class.forName("org.springframework.boot.devtools.RemoteSpringApplication");
             reloadingAgentEnabled = Environment.getCurrent().isReloadEnabled();
+            LOG.get().debug("Found spring-dev-tools on the class path");
         }
         catch (ClassNotFoundException e) {
             reloadingAgentEnabled = false;
+            try {
+                String jvmVersion = System.getProperty("java.specification.version");
+                if(jvmVersion.equals("1.8")) {
+                    Class.forName("org.springsource.loaded.TypeRegistry");
+                    LOG.get().debug("Found spring-loaded on the class path");
+                    reloadingAgentEnabled = Environment.getCurrent().isReloadEnabled();
+                } else {
+                    LOG.get().warn("Found spring-loaded on classpath but JVM is not 1.8 - skipping");
+                }
+            }
+            catch (ClassNotFoundException e1) {
+                reloadingAgentEnabled = false;
+            }
         }
         return reloadingAgentEnabled;
     }
@@ -609,5 +781,9 @@ public enum Environment {
         return location;
     }
 
+    private static String getEnvironment() {
+        String envName = System.getProperty(Environment.KEY);
+        return isBlank(envName) ? System.getenv(Environment.ENV_KEY) : envName;
+    }
 
 }

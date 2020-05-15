@@ -1,29 +1,23 @@
 package org.grails.web.commandobjects
 
 import grails.artefact.Artefact
-import grails.test.mixin.TestFor
-import grails.util.ClosureToMapPopulator
-import grails.validation.ConstraintsEvaluator
-
-import org.grails.validation.ConstraintsEvaluatorFactoryBean;
-
+import grails.testing.gorm.DataTest
+import grails.testing.web.controllers.ControllerUnitTest
+import grails.validation.Validateable
 import spock.lang.Issue
 import spock.lang.Specification
 
-@TestFor(TestController)
-class CommandObjectsSpec extends Specification {
+class CommandObjectsSpec extends Specification implements ControllerUnitTest<TestController>, DataTest {
 
-    def setupSpec() {
-        defineBeans {
-            theAnswer(Integer, 42)
-            "${ConstraintsEvaluator.BEAN_NAME}"(ConstraintsEvaluatorFactoryBean) {
-                def constraintsClosure = {
-                    isProg inList: ['Emerson', 'Lake', 'Palmer']
-                }
-                defaultConstraints = new ClosureToMapPopulator().populate(constraintsClosure)
-            }
+    Closure doWithSpring() {{ ->
+        theAnswer(Integer, 42)
+    }}
+
+    Closure doWithConfig() {{ config ->
+        config.grails.gorm.default.constraints = {
+            isProg inList: ['Emerson', 'Lake', 'Palmer']
         }
-    }
+    }}
 
     void "Test command object with date binding"() {
         setup:
@@ -34,27 +28,14 @@ class CommandObjectsSpec extends Specification {
         expectedCalendar.set Calendar.YEAR, 1973
         def expectedDate = expectedCalendar.time
 
+
         when:
         controller.params.birthday = "struct"
         controller.params.birthday_day = "03"
         controller.params.birthday_month = "05"
         controller.params.birthday_year = "1973"
-        def model = controller.closureActionWithDate()
+        def model = controller.methodActionWithDate()
         def birthday = model.command?.birthday
-
-        then:
-        model.command
-        !model.command.hasErrors()
-        birthday
-        expectedDate == birthday
-
-        when:
-        controller.params.birthday = "struct"
-        controller.params.birthday_day = "03"
-        controller.params.birthday_month = "05"
-        controller.params.birthday_year = "1973"
-        model = controller.methodActionWithDate()
-        birthday = model.command?.birthday
 
         then:
         model.command
@@ -77,17 +58,17 @@ class CommandObjectsSpec extends Specification {
         widget.errors.errorCount == 2
         widget.errors.getFieldError('width').rejectedValue == 'some bad value'
     }
-    
+
     @Issue('GRAILS-11218')
     void 'Test nested parameter names that match the command object parameter name'() {
         when: 'the top level of nested request parameters match the name of the command object class name minus the word "Command"'
         params.'widget.height' = 8
         def model = controller.methodActionWithWidgetCommand()
-        
+
         then: 'everything below the top level of the request parameter name is used for binding to that command object'
         model.widget.height == 8
     }
-    
+
     void 'Test non validateable command object'() {
         when:
         controller.params.name = 'Beardfish'
@@ -96,12 +77,6 @@ class CommandObjectsSpec extends Specification {
         then:
         model.commandObject.name == 'Beardfish'
 
-        when:
-        controller.params.name = "Spock's Beard"
-        model = controller.closureActionWithNonValidateableCommandObject()
-
-        then:
-        model.commandObject.name == "Spock's Beard"
     }
 
     void 'Test binding to a command object setter property'() {
@@ -124,15 +99,6 @@ class CommandObjectsSpec extends Specification {
         model.artist.name == 'Emerson'
         model.person.name == 'Emerson'
 
-        when:
-        controller.params.name = 'Emerson'
-        model = controller.closureActionWithMultipleCommandObjects()
-
-        then:
-        model.person
-        model.artist
-        model.artist.name == 'Emerson'
-        model.person.name == 'Emerson'
     }
 
     @Issue('GRAILS-11218')
@@ -148,16 +114,6 @@ class CommandObjectsSpec extends Specification {
         model.artist.name == 'Lake'
         model.person.name == 'Emerson'
 
-        when:
-        controller.params.person = [name: 'Emerson']
-        controller.params.artist = [name: 'Lake']
-        model = controller.closureActionWithMultipleCommandObjects()
-
-        then:
-        model.person
-        model.artist
-        model.artist.name == 'Lake'
-        model.person.name == 'Emerson'
     }
 
     void "Test clearErrors"() {
@@ -191,7 +147,7 @@ class CommandObjectsSpec extends Specification {
         when:
         def model = controller.methodAction()
         def person = model.person
-        def constrainedProperties = person.constraints
+        def constrainedProperties = person.constraintsMap
         def nameConstrainedProperty = constrainedProperties.name
         def matchesProperty = nameConstrainedProperty.matches
 
@@ -206,11 +162,6 @@ class CommandObjectsSpec extends Specification {
         then:
         model.person.theAnswer == 42
 
-        when:
-        model = controller.closureAction()
-
-        then:
-        model.person.theAnswer == 42
     }
 
     void 'Test bindable command object constraint'() {
@@ -227,17 +178,6 @@ class CommandObjectsSpec extends Specification {
         model.person.city == null
     }
 
-    void 'Test subscript operator on command object errors'() {
-        when:
-        controller.params.name = 'Maynard'
-        def model = controller.closureAction()
-
-        then:
-        model.person.hasErrors()
-        model.person.name == 'Maynard'
-        model.person.errors['name'].code == 'matches.invalid'
-    }
-
     void "Test validation"() {
         when:
         controller.params.name = 'JFK'
@@ -246,22 +186,6 @@ class CommandObjectsSpec extends Specification {
         then:
         !model.person.hasErrors()
         model.person.name == 'JFK'
-
-        when:
-        controller.params.name = 'JFK'
-        model = controller.closureAction()
-
-        then:
-        !model.person.hasErrors()
-        model.person.name == 'JFK'
-
-        when:
-        controller.params.name = 'Maynard'
-        model = controller.closureAction()
-
-        then:
-        model.person.hasErrors()
-        model.person.name == 'Maynard'
 
         when:
         controller.params.name = 'Maynard'
@@ -277,18 +201,7 @@ class CommandObjectsSpec extends Specification {
         when:
         controller.params.name = 'Emerson'
         controller.params.bandName = 'Emerson Lake and Palmer'
-        def model = controller.closureActionWithArtistSubclass()
-
-        then:
-        model.artist
-        model.artist.name == 'Emerson'
-        model.artist.bandName == 'Emerson Lake and Palmer'
-        !model.artist.hasErrors()
-
-        when:
-        controller.params.name = 'Emerson'
-        controller.params.bandName = 'Emerson Lake and Palmer'
-        model = controller.methodActionWithArtistSubclass()
+        def model = controller.methodActionWithArtistSubclass()
 
         then:
         model.artist
@@ -298,14 +211,6 @@ class CommandObjectsSpec extends Specification {
 
         when:
         controller.params.clear()
-        model = controller.closureActionWithArtistSubclass()
-
-        then:
-        model.artist
-        model.artist.hasErrors()
-        model.artist.errors.errorCount == 2
-
-        when:
         model = controller.methodActionWithArtistSubclass()
 
         then:
@@ -315,29 +220,14 @@ class CommandObjectsSpec extends Specification {
     }
 
     void "Test validation with shared constraints"() {
+
         when:
         controller.params.name = 'Emerson'
-        def model = controller.closureActionWithArtist()
+        def model = controller.methodActionWithArtist()
 
         then:
         model.artist
         !model.artist.hasErrors()
-
-        when:
-        controller.params.name = 'Emerson'
-        model = controller.methodActionWithArtist()
-
-        then:
-        model.artist
-        !model.artist.hasErrors()
-
-        when:
-        controller.params.name = 'Hendrix'
-        model = controller.closureActionWithArtist()
-
-        then:
-        model.artist
-        model.artist.hasErrors()
 
         when:
         controller.params.name = 'Hendrix'
@@ -378,23 +268,12 @@ class CommandObjectsSpec extends Specification {
         0 == model.co.validationCounter
 
         when:
-        model = controller.closureActionWithNonValidateableCommandObjectWithAValidateMethod()
-
-        then:
-        0 == model.co.validationCounter
-
-        when:
         ClassWithNoValidateMethod.metaClass.validate = { -> ++ delegate.validationCounter }
         model = controller.methodActionWithNonValidateableCommandObjectWithAValidateMethod()
 
         then:
         1 == model.co.validationCounter
 
-        when:
-        model = controller.closureActionWithNonValidateableCommandObjectWithAValidateMethod()
-
-        then:
-        1 == model.co.validationCounter
     }
 
     @Issue('grails/grails-core#9172')
@@ -412,14 +291,23 @@ class CommandObjectsSpec extends Specification {
         commandObject.version == null
 
     }
+
+    @Issue('https://github.com/grails/grails-core/issues/11432')
+    void 'Test binding to a generic-based field'() {
+        when:
+        params.firstName = 'Douglas'
+        params.lastName = 'Mendes'
+        def model = controller.methodActionWithGenericBasedCommand()
+        def commandObject = model.commandObject
+
+        then:
+        commandObject.firstName == 'Douglas'
+        commandObject.lastName == 'Mendes'
+    }
 }
 
 @Artefact('Controller')
 class TestController {
-    def closureAction = { Person p ->
-        [person: p]
-    }
-
     def methodAction(Person p) {
         [person: p]
     }
@@ -428,28 +316,12 @@ class TestController {
         [command: co]
     }
 
-    def closureActionWithDate = { DateComamndObject co ->
-        [command: co]
-    }
-
-    def closureActionWithArtist = { Artist a ->
-        [artist: a]
-    }
-
     def methodActionWithArtist(Artist a) {
         [artist: a]
     }
 
     def methodActionWithArtistSubclass(ArtistSubclass a) {
         [artist: a]
-    }
-
-    def closureActionWithArtistSubclass = { ArtistSubclass a ->
-        [artist: a]
-    }
-
-    def closureActionWithMultipleCommandObjects = { Person person, Artist artist ->
-        [person: person, artist: artist]
     }
 
     def methodActionWithMultipleCommandObjects(Person person, Artist artist)  {
@@ -462,14 +334,6 @@ class TestController {
 
     def methodActionWithWidgetCommand(WidgetCommand widget) {
         [widget: widget]
-    }
-
-    def closureActionWithNonValidateableCommandObjectWithAValidateMethod = { ClassWithNoValidateMethod co ->
-        [co: co]
-    }
-
-    def closureActionWithNonValidateableCommandObject = { NonValidateableCommand co ->
-        [commandObject: co]
     }
 
     def methodActionWithValidateableParam(SomeValidateableClass svc) {
@@ -485,6 +349,10 @@ class TestController {
     }
 
     def nonDomainCommandObject(NonDomainCommandObjectWithIdAndVersion co) {
+        [commandObject: co]
+    }
+
+    def methodActionWithGenericBasedCommand(ConcreteGenericBased co) {
         [commandObject: co]
     }
 }
@@ -512,7 +380,7 @@ class SomeCommand {
     }
 }
 
-class Artist {
+class Artist implements Validateable {
     String name
     static constraints = { name shared: 'isProg' }
 }
@@ -554,4 +422,12 @@ class NonDomainCommandObjectWithIdAndVersion {
     Long id
     Long version
     String name
+}
+
+abstract class WithGeneric<G> implements Validateable {
+    String firstName
+    G lastName
+}
+
+class ConcreteGenericBased extends WithGeneric<String> {
 }

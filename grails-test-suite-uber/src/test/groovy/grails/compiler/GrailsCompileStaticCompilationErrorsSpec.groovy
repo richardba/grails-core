@@ -1,12 +1,10 @@
 package grails.compiler
+
 import grails.persistence.Entity
-
 import org.codehaus.groovy.control.MultipleCompilationErrorsException
-
 import spock.lang.Ignore
 import spock.lang.Issue
 import spock.lang.Specification
-
 
 class GrailsCompileStaticCompilationErrorsSpec extends Specification {
 
@@ -189,6 +187,35 @@ class SomeClass implements grails.validation.Validateable {
         then: 'no errors are thrown'
         c
     }
+
+    @Issue('GRAILS-11242')
+    void 'Test compiling Validateable with inner class'() {
+        given:
+        def gcl = new GroovyClassLoader()
+
+        when: 'a class marked with @GrailsCompileStatic invokes dynamic finders on a non-domain class inside of a method marked with TypeCheckingMode.SKIP'
+        def c = gcl.parseClass('''
+package grails.compiler
+
+import groovy.transform.TypeCheckingMode
+
+@GrailsCompileStatic
+class SomeClass implements grails.validation.Validateable {
+
+    enum TestKind {
+        BIG,
+        SMALL
+    }
+    
+    String name
+    static constraints = {
+        name matches: /[A-Z].*/
+    }
+}
+''')
+        then: 'no errors are thrown'
+        c
+    }
     
     @Issue('GRAILS-11242')
     void 'Test compiling Validateable which contains unrelated type checking error'() {
@@ -345,6 +372,31 @@ class SomeClass {
         c
     }
 
+    void 'Test compiling a domain class with a namedQueries block'() {
+        given:
+        def gcl = new GroovyClassLoader()
+
+        when: 'a domain class marked with @GrailsCompileStatic contains a namedQueries block'
+        def c = gcl.parseClass('''
+package grails.compiler
+
+@GrailsCompileStatic
+@grails.persistence.Entity
+class SomeClass {
+
+    String name
+
+    static namedQueries = {
+        findByFirstName { String name ->
+            eq('name', name)
+        }
+    }
+}
+''')
+        then: 'no errors are thrown'
+        c
+    }
+
     @Issue('https://github.com/grails/grails-core/issues/643')
     void 'Test that a controller marked with @GrailsCompileStatic may reference dynamic request properties'() {
         given:
@@ -455,7 +507,7 @@ class SomeClass {
         gcl.parseClass('''
 package demo
 
-@grails.transaction.Transactional
+@grails.gorm.transactions.Transactional
 class SomeService {
     @grails.compiler.GrailsCompileStatic
     def someMethod() {
@@ -468,6 +520,62 @@ class SomeService {
         MultipleCompilationErrorsException e = thrown()
         e.message.contains 'Cannot find matching method java.lang.String#lastName()'
 
+    }
+
+    @Issue('grails/grails-core#10157')
+    void 'Test constraints block which imports from a non-existent class'() {
+        given:
+        def gcl = new GroovyClassLoader()
+
+        when: 'a class marked with @GrailsCompileStatic imports constraints from a non-existent class'
+        gcl.parseClass('''
+package grails.compiler
+
+import grails.validation.Validateable
+
+@GrailsCompileStatic
+class SomeValidateableClassWithInvalidImport implements Validateable {
+    String name
+
+    static constraints = {
+        importFrom SomeNonExistentClass
+    }
+}
+''')
+        then: 'an error is thrown'
+        thrown(MultipleCompilationErrorsException)
+    }
+
+    @Issue('grails/grails-core#10157')
+    void 'Test constraints block which imports constraints'() {
+        given:
+        def gcl = new GroovyClassLoader()
+
+        when: 'a class marked with @GrailsCompileStatic imports constraints from a non-existent class'
+        def c = gcl.parseClass('''
+package grails.compiler
+
+import grails.validation.Validateable
+
+@GrailsCompileStatic
+class SomeValidateableClassWithValidImport implements Validateable {
+    String name
+
+    static constraints = {
+        importFrom SomeOtherValidateableClass
+    }
+}
+
+class SomeOtherValidateableClass implements Validateable {
+    String name
+    static constraints = {
+        name size: 3..15
+    }
+}
+''')
+
+        then: 'the constraints were properly imported'
+        gcl.loadClass('grails.compiler.SomeValidateableClassWithValidImport').constraintsMap['name'].getAppliedConstraint('size').range == 3..15
     }
 }
 

@@ -109,6 +109,13 @@ public interface GrailsPluginManager extends ApplicationContextAware {
     void doDynamicMethods();
 
     /**
+     * Executes the {@link Plugin#onStartup(Map)} hook for all plugins
+     *
+     * @param event the Event
+     */
+    void onStartup(Map<String, Object> event);
+
+    /**
      * Retrieves a name Grails plugin instance
      *
      * @param name The name of the plugin
@@ -158,6 +165,7 @@ public interface GrailsPluginManager extends ApplicationContextAware {
     /**
      * Checks all the plugins to see whether they have any changes
      */
+    @Deprecated
     void checkForChanges();
 
     /**
@@ -216,15 +224,6 @@ public interface GrailsPluginManager extends ApplicationContextAware {
      * Shuts down the PluginManager
      */
     void shutdown();
-
-    /**
-     * Returns true if the given plugin supports the current BuildScope
-     * @param pluginName The name of the plugin
-     *
-     * @return true if the plugin supports the current build scope
-     * @see grails.util.BuildScope#getCurrent()
-     */
-    boolean supportsCurrentBuildScope(String pluginName);
 
     /**
      * Set whether the core plugins should be loaded

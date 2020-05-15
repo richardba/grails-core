@@ -18,34 +18,55 @@ package org.grails.web.mapping;
 import grails.core.GrailsApplication;
 import grails.core.GrailsControllerClass;
 import grails.core.support.ClassLoaderAware;
+import grails.gorm.validation.ConstrainedProperty;
+import grails.gorm.validation.DefaultConstrainedProperty;
 import grails.io.IOUtils;
 import grails.plugins.GrailsPluginManager;
 import grails.plugins.PluginManagerAware;
-import grails.validation.ConstrainedProperty;
+import grails.util.GrailsUtil;
 import grails.web.mapping.UrlMapping;
 import grails.web.mapping.UrlMappingData;
 import grails.web.mapping.UrlMappingEvaluator;
 import grails.web.mapping.UrlMappingParser;
 import grails.web.mapping.exceptions.UrlMappingException;
-import groovy.lang.*;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import groovy.lang.Binding;
+import groovy.lang.Closure;
+import groovy.lang.GroovyClassLoader;
+import groovy.lang.GroovyObject;
+import groovy.lang.GroovyObjectSupport;
+import groovy.lang.Script;
 import org.codehaus.groovy.runtime.IOGroovyMethods;
-import org.grails.validation.ConstrainedPropertyBuilder;
+import org.grails.datastore.gorm.validation.constraints.builder.ConstrainedPropertyBuilder;
+import org.grails.datastore.gorm.validation.constraints.eval.ConstraintsEvaluator;
+import org.grails.datastore.gorm.validation.constraints.eval.DefaultConstraintEvaluator;
+import org.grails.datastore.gorm.validation.constraints.registry.ConstraintRegistry;
+import org.grails.datastore.gorm.validation.constraints.registry.DefaultConstraintRegistry;
+import org.grails.datastore.mapping.keyvalue.mapping.config.KeyValueMappingContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.support.StaticMessageSource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpMethod;
 import org.springframework.util.Assert;
 import org.springframework.web.context.WebApplicationContext;
-import org.springframework.web.context.support.WebApplicationContextUtils;
 
 import javax.servlet.ServletContext;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * <p>A UrlMapping evaluator that evaluates Groovy scripts that are in the form:</p>
@@ -80,32 +101,46 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
     public static final String ACTION_SAVE = "save";
     public static final List<String> DEFAULT_RESOURCES_INCLUDES = Arrays.asList(ACTION_INDEX, ACTION_CREATE, ACTION_SAVE, ACTION_SHOW, ACTION_EDIT, ACTION_UPDATE, ACTION_PATCH, ACTION_DELETE);
     public static final List<String> DEFAULT_RESOURCE_INCLUDES = Arrays.asList(ACTION_CREATE, ACTION_SAVE, ACTION_SHOW, ACTION_EDIT, ACTION_UPDATE, ACTION_PATCH, ACTION_DELETE);
-    private static final Log LOG = LogFactory.getLog(UrlMappingBuilder.class);
+    private static final Logger LOG = LoggerFactory.getLogger(UrlMappingBuilder.class);
     private GroovyClassLoader classLoader = new GroovyClassLoader();
     private UrlMappingParser urlParser = new DefaultUrlMappingParser();
     private static final String EXCEPTION = "exception";
     private static final String PARSE_REQUEST = "parseRequest";
+    private static final String SINGLE = "single";
     private static final String RESOURCE = "resource";
     private static final String RESOURCES = "resources";
 
     private GrailsPluginManager pluginManager;
     private ApplicationContext applicationContext;
     private GrailsApplication grailsApplication;
-
-
-    /**
-     * @param servletContext The servlet context
-     * @deprecated Used DefaultUrLMappingsEvaluator(ApplicationContext) instead
-     */
-    @Deprecated
-    public DefaultUrlMappingEvaluator(ServletContext servletContext) {
-        this(WebApplicationContextUtils.getWebApplicationContext(servletContext));
-    }
+    private final ConstraintRegistry constraintRegistry;
+    private final ConstraintsEvaluator constraintsEvaluator;
 
     public DefaultUrlMappingEvaluator(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
         if (applicationContext != null) {
             this.grailsApplication = applicationContext.getBean(GrailsApplication.class);
+
+            ConstraintRegistry constraintRegistry;
+            try {
+                constraintRegistry = applicationContext.getBean(ConstraintRegistry.class);
+            } catch (BeansException e) {
+                constraintRegistry = new DefaultConstraintRegistry(applicationContext);
+            }
+            this.constraintRegistry = constraintRegistry;
+
+            ConstraintsEvaluator constraintEvaluator;
+            try {
+                constraintEvaluator = applicationContext.getBean(ConstraintsEvaluator.class);
+            } catch (BeansException e) {
+                constraintEvaluator = new DefaultConstraintEvaluator(constraintRegistry, new KeyValueMappingContext("test"), Collections.<String, Object>emptyMap());
+            }
+            this.constraintsEvaluator = constraintEvaluator;
+        }
+        else {
+            StaticMessageSource messageSource = new StaticMessageSource();
+            this.constraintRegistry = new DefaultConstraintRegistry(messageSource);
+            this.constraintsEvaluator = new DefaultConstraintEvaluator(messageSource);
         }
     }
 
@@ -219,14 +254,14 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
 
         private boolean urlDefiningMode = true;
         private boolean inGroupConstraints = false;
-        private List<ConstrainedProperty> previousConstraints = new ArrayList<ConstrainedProperty>();
-        private List<UrlMapping> urlMappings = new ArrayList<UrlMapping>();
-        private Map<String, Object> parameterValues = new HashMap<String, Object>();
+        private List<ConstrainedProperty> previousConstraints = new ArrayList<>();
+        private List<UrlMapping> urlMappings = new ArrayList<>();
+        private Map<String, Object> parameterValues = new HashMap<>();
         private Binding binding;
         private Object exception;
         private Object parseRequest;
-        private Deque<ParentResource> parentResources = new ArrayDeque<ParentResource>();
-        private Deque<MetaMappingInfo> mappingInfoDeque = new ArrayDeque<MetaMappingInfo>();
+        private Deque<ParentResource> parentResources = new ArrayDeque<>();
+        private Deque<MetaMappingInfo> mappingInfoDeque = new ArrayDeque<>();
         private boolean isInCollection;
 
         public UrlMappingBuilder(Binding binding) {
@@ -269,7 +304,7 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
         @Override
         public Object getProperty(String name) {
             if (urlDefiningMode) {
-                final ConstrainedProperty newConstrained = new ConstrainedProperty(UrlMapping.class, name, String.class);
+                final ConstrainedProperty newConstrained = new DefaultConstrainedProperty(UrlMapping.class, name, String.class, DefaultUrlMappingEvaluator.this.constraintRegistry);
                 previousConstraints.add(newConstrained);
                 return CAPTURING_WILD_CARD;
             }
@@ -340,6 +375,14 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             getMetaMappingInfo().setView(viewName);
         }
 
+        public void setMethod(Object method) {
+            getMetaMappingInfo().setHttpMethod(method.toString());
+        }
+
+        public Object getMethod() {
+            return getMetaMappingInfo().getHttpMethod();
+        }
+
         public void name(Map<String, UrlMapping> m) {
             for (Map.Entry<String, UrlMapping> entry : m.entrySet()) {
                 entry.getValue().setMappingName(entry.getKey());
@@ -408,10 +451,8 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return get(arguments, uri, null);
         }
         public UrlMapping get(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.GET);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.GET.toString();
+            return regexUrlMapping;
         }
 
 
@@ -430,10 +471,8 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return post(arguments, uri, null);
         }
         public UrlMapping post(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.POST);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.POST.toString();
+            return regexUrlMapping;
         }
 
         /**
@@ -451,10 +490,8 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return put(arguments, uri, null);
         }
         public UrlMapping put(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.PUT);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.PUT.toString();
+            return regexUrlMapping;
         }
 
         /**
@@ -472,14 +509,12 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return patch(arguments, uri, null);
         }
         public UrlMapping patch(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.PATCH);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.PATCH.toString();
+            return regexUrlMapping;
         }
 
         /**
-         * Matches the PATCH method
+         * Matches the DELETE method
          *
          * @param arguments The arguments
          * @param uri The URI
@@ -493,10 +528,8 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return delete(arguments, uri, null);
         }
         public UrlMapping delete(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.DELETE);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.DELETE.toString();
+            return regexUrlMapping;
         }
         /**
          * Matches the HEAD method
@@ -513,14 +546,12 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return head(arguments, uri, null);
         }
         public UrlMapping head(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.HEAD);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.HEAD.toString();
+            return regexUrlMapping;
         }
 
         /**
-         * Matches the HEAD method
+         * Matches the OPTIONS method
          *
          * @param arguments The arguments
          * @param uri The URI
@@ -534,10 +565,8 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
             return options(arguments, uri, null);
         }
         public UrlMapping options(RegexUrlMapping regexUrlMapping) {
-            urlMappings.remove(regexUrlMapping);
-            RegexUrlMapping newMapping = new RegexUrlMapping(regexUrlMapping, HttpMethod.OPTIONS);
-            urlMappings.add(newMapping);
-            return newMapping;
+            regexUrlMapping.httpMethod = HttpMethod.OPTIONS.toString();
+            return regexUrlMapping;
         }
         /**
          * Define Url mapping collections that are nested directly below the parent resource (without the id)
@@ -650,8 +679,14 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
 
                             UrlMappingData urlData = createUrlMappingData(uri, isResponseCode);
 
-                            if (namedArguments.containsKey(RESOURCE)) {
-                                Object controller = namedArguments.get(RESOURCE);
+                            if (namedArguments.containsKey(RESOURCE) || namedArguments.containsKey(SINGLE)) {
+                                Object controller;
+                                if (namedArguments.containsKey(RESOURCE)) {
+                                    GrailsUtil.deprecated("The " + RESOURCE + " syntax is deprecated and will be removed in a future release. Use " + SINGLE + " instead.");
+                                    controller = namedArguments.get(RESOURCE);
+                                } else {
+                                    controller = namedArguments.get(SINGLE);
+                                }
                                 String controllerName = controller.toString();
                                 mappingInfo.setController(controllerName);
                                 parentResources.push(new ParentResource(controllerName, uri, true));
@@ -670,16 +705,20 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
                                 mappingInfo.setController(controllerName);
                                 parentResources.push(new ParentResource(controllerName, uri, false));
                                 try {
+                                    urlDefiningMode = true;
                                     invokeLastArgumentIfClosure(args);
                                 } finally {
                                     parentResources.pop();
+                                    hasParent = !parentResources.isEmpty();
+                                    if (!hasParent) {
+                                        urlDefiningMode = false;
+                                    }
                                 }
                                 if (controller != null) {
                                     createResourceRestfulMappings(controllerName, mappingInfo.getPlugin(), mappingInfo.getNamespace(), version, urlData, currentConstraints, calculateIncludes(namedArguments, DEFAULT_RESOURCES_INCLUDES));
                                 }
                             }
                             else {
-
                                 invokeLastArgumentIfClosure(args);
                                 UrlMapping urlMapping = getURLMappingForNamedArgs(namedArguments, urlData, mappedURI, isResponseCode, currentConstraints);
                                 configureUrlMapping(urlMapping);
@@ -696,19 +735,22 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
                         }
                     }
                 } else if ((!urlDefiningMode || (parentResources.size() > 0 && parentResources.peek().isGroup)) && CONSTRAINTS.equals(mappedURI)) {
-                    ConstrainedPropertyBuilder builder = new ConstrainedPropertyBuilder(this);
                     if (args.length > 0 && (args[0] instanceof Closure)) {
 
                         Closure callable = (Closure) args[0];
-                        callable.setDelegate(builder);
-                        callable.setResolveStrategy(Closure.DELEGATE_FIRST);
+                        ConstrainedPropertyBuilder builder = constraintsEvaluator.newConstrainedPropertyBuilder(UrlMapping.class);
                         for (ConstrainedProperty constrainedProperty : currentConstraints) {
                             builder.getConstrainedProperties().put(constrainedProperty.getPropertyName(), constrainedProperty);
                         }
+                        callable.setResolveStrategy(Closure.DELEGATE_FIRST);
+                        callable.setDelegate(builder);
                         callable.call();
+                        return builder.getConstrainedProperties();
+
                     }
-                    return builder.getConstrainedProperties();
+                    return Collections.emptyMap();
                 } else {
+                    LOG.error("Mapping: '"+ mappedURI + "' does not start with " + SLASH + " or is response code.");
                     return super.invokeMethod(mappedURI, arg);
                 }
             } finally {
@@ -761,7 +803,6 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
 
             ParentResource parentResource = parentResources.peek();
             if (CONSTRAINTS.equals(uri) && parentResource.isGroup) {
-                inGroupConstraints = true;
                 return uri;
             }
 
@@ -777,12 +818,13 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
 
                     if(!isInCollection) {
                         uriBuilder.append(SLASH).append(CAPTURING_WILD_CARD);
-                        constrainedList.add(new ConstrainedProperty(UrlMapping.class, parentResource.controllerName + "Id", String.class));
                     }
                 }
             }
 
-            uriBuilder.append(uri);
+            if(!SLASH.equals(uri)) {
+                uriBuilder.append(uri);
+            }
             return uriBuilder.toString();
         }
 
@@ -868,7 +910,7 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
         protected UrlMapping createEditActionResourcesRestfulMapping(String controllerName, Object pluginName, Object namespace, String version, UrlMappingData urlData, List<ConstrainedProperty> constrainedList) {
             UrlMappingData editUrlMappingData = urlData.createRelative('/' + CAPTURING_WILD_CARD + "/edit");
             List<ConstrainedProperty> editUrlMappingConstraints = new ArrayList<ConstrainedProperty>(constrainedList);
-            editUrlMappingConstraints.add(new ConstrainedProperty(UrlMapping.class, "id", String.class));
+            editUrlMappingConstraints.add(new DefaultConstrainedProperty(UrlMapping.class, "id", String.class, constraintRegistry));
 
             return new RegexUrlMapping(editUrlMappingData, controllerName, ACTION_EDIT, namespace, pluginName, null, HttpMethod.GET.toString(), version, editUrlMappingConstraints.toArray(new ConstrainedProperty[editUrlMappingConstraints.size()]), grailsApplication);
         }
@@ -882,9 +924,9 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
 
         private List<ConstrainedProperty> createConstraintsWithIdAndFormat(List<ConstrainedProperty> constrainedList) {
             List<ConstrainedProperty> showUrlMappingConstraints = new ArrayList<ConstrainedProperty>(constrainedList);
-            showUrlMappingConstraints.add(new ConstrainedProperty(UrlMapping.class, "id", String.class));
-            ConstrainedProperty cp = new ConstrainedProperty(UrlMapping.class, "format", String.class);
-            cp.setNullable(true);
+            showUrlMappingConstraints.add(new DefaultConstrainedProperty(UrlMapping.class, "id", String.class, constraintRegistry));
+            ConstrainedProperty cp = new DefaultConstrainedProperty(UrlMapping.class, "format", String.class, constraintRegistry);
+            cp.applyConstraint(ConstrainedProperty.NULLABLE_CONSTRAINT, true);
             showUrlMappingConstraints.add(cp);
             return showUrlMappingConstraints;
         }
@@ -919,8 +961,8 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
 
         private List<ConstrainedProperty> createFormatOnlyConstraints(List<ConstrainedProperty> constrainedList) {
             List<ConstrainedProperty> indexUrlMappingConstraints = new ArrayList<ConstrainedProperty>(constrainedList);
-            ConstrainedProperty cp = new ConstrainedProperty(UrlMapping.class, "format", String.class);
-            cp.setNullable(true);
+            ConstrainedProperty cp = new DefaultConstrainedProperty(UrlMapping.class, "format", String.class, constraintRegistry);
+            cp.applyConstraint(ConstrainedProperty.NULLABLE_CONSTRAINT, true);
             indexUrlMappingConstraints.add(cp);
             return indexUrlMappingConstraints;
         }
@@ -1198,6 +1240,12 @@ public class DefaultUrlMappingEvaluator implements UrlMappingEvaluator, ClassLoa
                 List<ConstrainedProperty> parentMappingConstraints = parentMappingInfo.getConstraints();
                 if (parentMappingConstraints != null) {
                     mappingInfo.getConstraints().addAll(parentMappingConstraints);
+                }
+                ParentResource parentResource = parentResources.peek();
+                if(parentResource != null && !parentResource.isSingle) {
+                    if(!isInCollection) {
+                        mappingInfo.getConstraints().add(new DefaultConstrainedProperty(UrlMapping.class, parentResource.controllerName + "Id", String.class, constraintRegistry));
+                    }
                 }
             }
             if (previousConstraints.size() > 0) {

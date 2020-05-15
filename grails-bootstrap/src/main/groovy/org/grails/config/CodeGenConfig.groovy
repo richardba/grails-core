@@ -23,6 +23,7 @@ import groovy.transform.CompileStatic
 import org.codehaus.groovy.runtime.DefaultGroovyMethods
 import org.codehaus.groovy.runtime.typehandling.GroovyCastException
 import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.SafeConstructor
 
 
 /**
@@ -37,6 +38,8 @@ import org.yaml.snakeyaml.Yaml
 @Canonical
 class CodeGenConfig implements Cloneable, ConfigMap {
     final NavigableMap configMap
+
+    GroovyClassLoader groovyClassLoader = new GroovyClassLoader(CodeGenConfig.getClassLoader())
 
     CodeGenConfig() {
         configMap = new NavigableMap()
@@ -138,9 +141,19 @@ class CodeGenConfig implements Cloneable, ConfigMap {
         }
     }
 
+    void loadGroovy(File groovyConfig) {
+        if(groovyConfig.exists()) {
+            def envName = Environment.current.name
+            def configSlurper = new ConfigSlurper(envName)
+            configSlurper.classLoader = groovyClassLoader
+            def configObject = configSlurper.parse(groovyConfig.toURI().toURL())
+            mergeMap(configObject, false)
+        }
+    }
+
     @CompileDynamic // fails with CompileStatic!
     void loadYml(InputStream input) {
-        Yaml yaml = new Yaml()
+        Yaml yaml = new Yaml(new SafeConstructor())
         for(Object yamlObject : yaml.loadAll(input)) {
             if(yamlObject instanceof Map) { // problem here with CompileStatic
                 mergeMap((Map)yamlObject)
@@ -172,6 +185,9 @@ class CodeGenConfig implements Cloneable, ConfigMap {
         } else if(requiredType==Boolean.class) {
             Boolean booleanObject = toBooleanObject(String.valueOf(value))
             return booleanObject != null ? booleanObject : Boolean.FALSE
+        } else if (requiredType==boolean) {
+            Boolean booleanObject = toBooleanObject(String.valueOf(value))
+            return booleanObject != null ? booleanObject.booleanValue() : Boolean.FALSE.booleanValue()
         } else if(requiredType==Integer.class) {
             if(value instanceof Number) {
                 return Integer.valueOf(((Number)value).intValue())
@@ -251,7 +267,16 @@ class CodeGenConfig implements Cloneable, ConfigMap {
     public <T> T getProperty(String name, Class<T> requiredType) {
         return convertToType( configMap.getProperty(name), requiredType )
     }
-    
+
+    @Override
+    def <T> T getProperty(String key, Class<T> targetType, T defaultValue) {
+        def v = getProperty(key, targetType)
+        if(v == null) {
+            return defaultValue
+        }
+        return v
+    }
+
     public void setProperty(String name, Object value) {
         configMap.setProperty(name, value)
     }

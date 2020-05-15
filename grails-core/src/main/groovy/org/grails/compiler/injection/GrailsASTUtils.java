@@ -17,8 +17,6 @@ package org.grails.compiler.injection;
 
 import grails.artefact.Enhanced;
 import grails.compiler.ast.GrailsArtefactClassInjector;
-import grails.core.GrailsDomainClassProperty;
-import grails.util.GrailsClassUtils;
 import grails.util.GrailsNameUtils;
 import groovy.lang.Closure;
 import groovy.lang.MissingMethodException;
@@ -37,6 +35,8 @@ import org.codehaus.groovy.syntax.SyntaxException;
 import org.codehaus.groovy.syntax.Token;
 import org.codehaus.groovy.syntax.Types;
 import org.codehaus.groovy.transform.sc.StaticCompileTransformation;
+import org.codehaus.groovy.transform.trait.Traits;
+import org.grails.datastore.mapping.model.config.GormProperties;
 import org.grails.io.support.FileSystemResource;
 import org.grails.io.support.Resource;
 import org.springframework.util.StringUtils;
@@ -76,12 +76,6 @@ public class GrailsASTUtils {
     private static final ClassNode TYPECHECKINGMODE_CLASS_NODE = ClassHelper.make(TypeCheckingMode.class);
     public static final Parameter[] ZERO_PARAMETERS = new Parameter[0];
     public static final ArgumentListExpression ZERO_ARGUMENTS = new ArgumentListExpression();
-    
-    /**
-     * @deprecated Sharing copies of VariableExpression which refer to "this" is unsafe
-     */
-    @Deprecated
-    public static final VariableExpression THIS_EXPR = new VariableExpression("this");
 
 
     public static void warning(final SourceUnit sourceUnit, final ASTNode node, final String warningMessage) {
@@ -209,8 +203,7 @@ public class GrailsASTUtils {
     public static ClassNode getFurthestUnresolvedParent(ClassNode classNode) {
         ClassNode parent = classNode.getSuperClass();
 
-        while (parent != null && !getFullName(parent).equals("java.lang.Object") &&
-               !parent.isResolved() && !Modifier.isAbstract(parent.getModifiers())) {
+        while (parent != null && !getFullName(parent).equals("java.lang.Object") && !parent.isResolved()) {
             classNode = parent;
             parent = parent.getSuperClass();
         }
@@ -262,11 +255,12 @@ public class GrailsASTUtils {
         if (classNode.hasDeclaredMethod(methodName, copyParameters(parameterTypes, genericsPlaceholders))) {
             return null;
         }
-        String propertyName = GrailsClassUtils.getPropertyForGetter(methodName);
+        ClassNode returnType = declaredMethod.getReturnType();
+        String propertyName = !returnType.isPrimaryClassNode() ? GrailsNameUtils.getPropertyForGetter(methodName, returnType.getTypeClass()) : GrailsNameUtils.getPropertyForGetter(methodName);
         if (propertyName != null && parameterTypes.length == 0 && classNode.hasProperty(propertyName)) {
             return null;
         }
-        propertyName = GrailsClassUtils.getPropertyForSetter(methodName);
+        propertyName = GrailsNameUtils.getPropertyForSetter(methodName);
         if (propertyName != null && parameterTypes.length == 1 && classNode.hasProperty(propertyName)) {
             return null;
         }
@@ -274,7 +268,7 @@ public class GrailsASTUtils {
         BlockStatement methodBody = new BlockStatement();
         ArgumentListExpression arguments = createArgumentListFromParameters(parameterTypes, thisAsFirstArgument, genericsPlaceholders);
 
-        ClassNode returnType = replaceGenericsPlaceholders(declaredMethod.getReturnType(), genericsPlaceholders);
+        returnType = replaceGenericsPlaceholders(returnType, genericsPlaceholders);
 
         MethodCallExpression methodCallExpression = new MethodCallExpression(delegate, methodName, arguments);
         methodCallExpression.setMethodTarget(declaredMethod);
@@ -726,16 +720,24 @@ public class GrailsASTUtils {
 
         if (!isDomainClass && sourceNode != null) {
             final String sourcePath = sourceNode.getName();
-            final File sourceFile = new File(sourcePath);
-            File parent = sourceFile.getParentFile();
-            while (parent != null && !isDomainClass) {
-                final File parentParent = parent.getParentFile();
-                if (parent.getName().equals(DOMAIN_DIR) &&
-                        parentParent != null &&
-                        parentParent.getName().equals(GRAILS_APP_DIR)) {
-                    isDomainClass = true;
-                }
-                parent = parentParent;
+            final String grailsAppDirToLookFor = File.separator +
+                    GRAILS_APP_DIR + File.separator;
+            final int indexOfGrailsAppDir = sourcePath.lastIndexOf(grailsAppDirToLookFor);
+            if(indexOfGrailsAppDir >= 0) {
+                final String pathToGrailsAppDir =
+                        sourcePath.substring(0, indexOfGrailsAppDir +
+                                                grailsAppDirToLookFor.length());
+
+                final String pathToDomainDir = pathToGrailsAppDir +
+                        DOMAIN_DIR + File.separator;
+
+                final String className = classNode.getName();
+                final String relativePathToDomainSourceFile =
+                        className.replace('.', File.separatorChar) + ".groovy";
+                final String pathToDomainSourceFile = pathToDomainDir +
+                                                      relativePathToDomainSourceFile;
+
+                isDomainClass = new File(pathToDomainSourceFile).exists();
             }
         }
 
@@ -968,6 +970,16 @@ public class GrailsASTUtils {
         return false;
     }
 
+    public static boolean removeAnnotation(final MethodNode methodNode, final Class<? extends Annotation> annotationClass) {
+        List<AnnotationNode> annotations = methodNode.getAnnotations(new ClassNode(annotationClass));
+        if (annotations.size() > 0) {
+            methodNode.getAnnotations().removeAll(annotations);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     public static void addMethodIfNotPresent(ClassNode controllerClassNode, MethodNode methodNode) {
         MethodNode existing = controllerClassNode.getMethod(methodNode.getName(), methodNode.getParameters());
         if (existing == null) {
@@ -1088,9 +1100,9 @@ public class GrailsASTUtils {
 
     public static Map<String,ClassNode> getAllAssociationMap(ClassNode classNode) {
         Map<String, ClassNode> associationMap = new HashMap<String, ClassNode>();
-        associationMap.putAll( getAssocationMap(classNode, GrailsDomainClassProperty.HAS_MANY));
-        associationMap.putAll( getAssocationMap(classNode, GrailsDomainClassProperty.HAS_ONE));
-        associationMap.putAll( getAssocationMap(classNode, GrailsDomainClassProperty.BELONGS_TO));
+        associationMap.putAll( getAssocationMap(classNode, GormProperties.HAS_MANY));
+        associationMap.putAll( getAssocationMap(classNode, GormProperties.HAS_ONE));
+        associationMap.putAll( getAssocationMap(classNode, GormProperties.BELONGS_TO));
         return associationMap;
     }
 
@@ -1444,19 +1456,25 @@ public class GrailsASTUtils {
             scopeVisitor.visitMethod(methodNode);
         }
     }
-    
-    public static boolean isSetterOrGetterMethod(MethodNode md) {
+
+    public static boolean isGetterMethod(MethodNode md) {
         String methodName = md.getName();
-        
-        if((methodName.startsWith("set") && methodName.length() > 3) && md.getParameters() != null && md.getParameters().length == 1) {
-            return true;
-        }
-        
-        if(((methodName.startsWith("get") && methodName.length() > 3) || (methodName.startsWith("is") && methodName.length() > 2)) && (md.getParameters()==null || md.getParameters().length == 0)) {
-            return true;
-        }
-        
-        return false;
+
+        return (((methodName.startsWith("get") && methodName.length() > 3) || (methodName.startsWith("is") && methodName.length() > 2)) && (md.getParameters()==null || md.getParameters().length == 0));
+    }
+
+    public static boolean isSetterMethod(MethodNode md) {
+        String methodName = md.getName();
+
+        return ((methodName.startsWith("set") &&
+                methodName.length() > 3) &&
+                Character.isUpperCase(methodName.substring(3).charAt(0)) &&
+                md.getParameters() != null &&
+                md.getParameters().length == 1);
+    }
+
+    public static boolean isSetterOrGetterMethod(MethodNode md) {
+        return isGetterMethod(md) || isSetterMethod(md);
     }
 
     /**
@@ -1487,5 +1505,13 @@ public class GrailsASTUtils {
 
     public static URL getSourceUrl(ClassNode classNode) {
         return getSourceUrl(classNode.getModule().getContext());
+    }
+
+    public static boolean hasParameters(MethodNode methodNode) {
+        return methodNode.getParameters().length > 0;
+    }
+
+    public static boolean isInheritedFromTrait(MethodNode methodNode) {
+        return hasAnnotation(methodNode, Traits.TraitBridge.class);
     }
 }

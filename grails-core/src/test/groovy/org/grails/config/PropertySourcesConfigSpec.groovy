@@ -2,7 +2,11 @@ package org.grails.config
 
 import org.springframework.core.env.MapPropertySource
 import org.springframework.core.env.MutablePropertySources
+import spock.lang.Ignore
+import spock.lang.Issue
 import spock.lang.Specification
+
+import javax.persistence.FlushModeType
 
 /*
  * Copyright 2014 original authors
@@ -27,7 +31,7 @@ class PropertySourcesConfigSpec extends Specification {
 
     void "Test that PropertySourcesConfig works as expected"() {
         given:"A PropertySourcesConfig instance"
-            def propertySource = new MapPropertySource("foo", [one:1, two:2, 'three.four': 34, 'empty.value':null])
+            def propertySource = new MapPropertySource("foo", [one:1, two:2, 'flush.mode': 'commit', 'three.four': 34, 'empty.value':null])
             def propertySources = new MutablePropertySources()
             propertySources.addLast(propertySource)
             def config = new PropertySourcesConfig(propertySources)
@@ -43,9 +47,34 @@ class PropertySourcesConfigSpec extends Specification {
             config.get('three.four') == 34
             config.getProperty('three.four') == '34'
             config.getProperty('three.four', Date) == null
+            config.getProperty('flush.mode', FlushModeType) == FlushModeType.COMMIT
             !config.empty.value
 
 
 
+    }
+
+    /*
+
+      We need to settle on whether the following is a bug or not.
+      There are some tests in ConfigMapSpec that indirectly assert some
+      behavior that I think would be inconsistent with making the following
+      test pass.
+
+     */
+    @Ignore
+    @Issue('grails/grails-core#10188')
+    void 'test replacing nested property values'() {
+        given: 'a PropertySourcesConfig'
+        def cfg = new PropertySourcesConfig()
+
+        when: 'a nested property is assigned a value'
+        cfg.foo.bar = ['one': '1']
+
+        and: 'later is assigned a different value'
+        cfg.foo.bar = ['two': '2']
+
+        then: 'the second value is not merged with the first value'
+        cfg.foo.bar == ['two': '2']
     }
 }

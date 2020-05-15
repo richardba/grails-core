@@ -15,13 +15,19 @@
 
 package grails.doc
 
+import grails.doc.asciidoc.AsciiDocEngine
 import grails.doc.internal.*
 import groovy.io.FileType
 import groovy.text.Template
 
 import org.apache.commons.logging.LogFactory
+import org.radeox.api.engine.WikiRenderEngine
 import org.radeox.engine.context.BaseInitialRenderContext
+import org.radeox.engine.context.BaseRenderContext
 import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.SafeConstructor
+
+import java.util.regex.Pattern
 
 /**
  * Coordinated the DocEngine the produce documentation based on the gdoc format.
@@ -46,6 +52,8 @@ class DocPublisher {
     File images
     /** The directory containing any CSS to use (will override defaults) **/
     File css
+    /** The directory containing any fonts to use (will override defaults) **/
+    File fonts
     /** The directory containing any Javascript to use (will override defaults) **/
     File js
     /** The directory cotnaining any templates to use (will override defaults) **/
@@ -80,13 +88,19 @@ class DocPublisher {
     String logo
     /** HTML markup that renders the right logo */
     String sponsorLogo
+    /**
+     * The source repository
+     */
+    String sourceRepo
 
     /** Properties used to configure the DocEngine */
     Properties engineProperties
 
+    boolean asciidoc = false
+
     def output
-    private context
-    private engine
+    private BaseRenderContext context
+    private WikiRenderEngine engine
     private customMacros = []
 
     DocPublisher() {
@@ -151,7 +165,9 @@ class DocPublisher {
         ant.mkdir(dir: "$refDocsDir/ref")
 
         String imgsDir = new File(refDocsDir, calculatePathToResources("img")).path
+        File fontsDir = new File(refDocsDir, calculatePathToResources("fonts"))
         ant.mkdir(dir: imgsDir)
+        ant.mkdir(dir: fontsDir )
         String cssDir = new File(refDocsDir, calculatePathToResources("css")).path
         ant.mkdir(dir: cssDir)
         String jsDir = new File(refDocsDir, calculatePathToResources("js")).path
@@ -167,12 +183,22 @@ class DocPublisher {
                 fileset(dir: images)
             }
         }
+
         ant.copy(todir: cssDir, overwrite: true) {
             fileset(dir: "${docResources}/css")
         }
+        ant.copy(todir: fontsDir, overwrite: true) {
+            fileset(dir: "${docResources}/fonts")
+        }
+
         if (css && css.exists()) {
             ant.copy(todir: cssDir, overwrite: true, failonerror:false) {
                 fileset(dir: css)
+            }
+        }
+        if (fonts && fonts.exists()) {
+            ant.copy(todir: fontsDir, overwrite: true, failonerror:false) {
+                fileset(dir: fonts)
             }
         }
         ant.copy(todir: jsDir, overwrite: true) {
@@ -201,12 +227,15 @@ class DocPublisher {
         def guideSrcDir = new File(src, "guide")
         def yamlTocFile = new File(guideSrcDir, TOC_FILENAME)
         def guide
+        def ext = asciidoc ? ".adoc" : ".gdoc"
         if (yamlTocFile.exists()) {
-            guide = new YamlTocStrategy(new FileResourceChecker(guideSrcDir)).generateToc(yamlTocFile)
+            def tocStrategy = new YamlTocStrategy(new FileResourceChecker(guideSrcDir), ext)
+            guide = tocStrategy.generateToc(yamlTocFile)
 
             // A set of all gdoc files.
             def files = []
-            guideSrcDir.traverse(type: FileType.FILES, nameFilter: ~/^.+\.gdoc$/) {
+            def pattern = asciidoc ? ~/^.+\.adoc$/ : ~/^.+\.gdoc$/
+            guideSrcDir.traverse(type: FileType.FILES, nameFilter: pattern) {
                 // We need relative file paths with '/' separators, since those
                 // are what are stored in the UserGuideNodes.
                 files << (it.absolutePath - guideSrcDir.absolutePath)[1..-1].
@@ -222,7 +251,8 @@ class DocPublisher {
             }
         }
         else {
-            def files = guideSrcDir.listFiles()?.findAll { it.name.endsWith(".gdoc") } ?: []
+
+            def files = guideSrcDir.listFiles()?.findAll { it.name.endsWith(ext) } ?: []
             guide = new LegacyTocStrategy().generateToc(files)
         }
 
@@ -235,7 +265,7 @@ class DocPublisher {
         def legacyLinks = [:]
         if (legacyLinksFile.exists()) {
             legacyLinksFile.withInputStream { input ->
-                legacyLinks = new Yaml().load(input)
+                legacyLinks = new Yaml(new SafeConstructor()).load(input)
             }
         }
 
@@ -247,16 +277,18 @@ class DocPublisher {
         def refCategories = files.collect { f ->
             new Expando(
                     name: f.name,
-                    usage: new File("${src}/ref/${f.name}.gdoc"),
-                    sections: f.listFiles().findAll { it.name.endsWith(".gdoc") }.sort())
+                    usage: new File("${src}/ref/${f.name}$ext"),
+                    sections: f.listFiles().findAll { it.name.endsWith(ext) }.sort())
         }
 
         def fullToc = new StringBuilder()
 
         def pathToRoot = ".."
-        def vars = [
+        Map vars = new LinkedHashMap(engineProperties)
+        vars.putAll(
             encoding: encoding,
             title: title,
+            docTitle: title,
             subtitle: subtitle,
             footer: footer, // TODO - add a way to specify footer
             authors: authors,
@@ -272,8 +304,22 @@ class DocPublisher {
             resourcesPath: calculatePathToResources(pathToRoot),
             prev: null,
             next: null,
-            legacyLinks: legacyLinks
-        ]
+            legacyLinks: legacyLinks,
+            sourceRepo: sourceRepo,
+        )
+
+        if(engine instanceof AsciiDocEngine) {
+            // pass attributes to asciidoc
+            ((AsciiDocEngine)engine).attributes.putAll(
+                    version: version,
+                    apiDocs: "http://docs.grails.org/${version}/api/",
+                    sourceRepo: sourceRepo
+            )
+            ((AsciiDocEngine)engine).attributes.putAll(
+                    engineProperties
+            )
+        }
+
 
         // Build the user guide sections first.
         def template = templateEngine.createTemplate(new File("${docResources}/style/guideItem.html").newReader(encoding))
@@ -311,15 +357,16 @@ class DocPublisher {
                 vars.section = section
 
                 new File("${refDocsDir}/ref/${section}").mkdirs()
-                def textiles = f.listFiles().findAll { it.name.endsWith(".gdoc")}.sort()
-                def usageFile = new File("${src}/ref/${section}.gdoc")
+                def textiles = f.listFiles().findAll { it.name.endsWith(ext)}.sort()
+                def usageFile = new File("${src}/ref/${section}${ext}")
                 if (usageFile.exists()) {
                     def data = usageFile.getText("UTF-8")
                     context.set(DocEngine.SOURCE_FILE, usageFile)
                     context.set(DocEngine.CONTEXT_PATH, pathToRoot)
                     context.set(DocEngine.API_CONTEXT_PATH, vars.resourcesPath)
+                    output.warn "Rendering document file $usageFile.name"
                     vars.content = engine.render(data, context)
-
+                    vars.sourcePath = "ref/$usageFile.name"
                     new File("${refDocsDir}/ref/${section}/Usage.html").withWriter(encoding) {out ->
                         template.make(vars).writeTo(out)
                     }
@@ -330,8 +377,9 @@ class DocPublisher {
                     context.set(DocEngine.SOURCE_FILE, txt.name)
                     context.set(DocEngine.CONTEXT_PATH, pathToRoot)
                     context.set(DocEngine.API_CONTEXT_PATH, vars.resourcesPath)
+                    output.warn "Rendering document file $txt.name"
                     vars.content = engine.render(data, context)
-
+                    vars.sourcePath = "ref/${section}/$txt.name"
                     new File("${refDocsDir}/ref/${section}/${name}.html").withWriter(encoding) {out ->
                         template.make(vars).writeTo(out)
                     }
@@ -399,11 +447,14 @@ class DocPublisher {
         context.set(DocEngine.CONTEXT_PATH, path)
 
         def varsCopy = [*:vars]
+        varsCopy.putAll(engineProperties)
         varsCopy.name = section.name
         varsCopy.title = section.title
         varsCopy.path = path
         varsCopy.level = level
         varsCopy.sectionToc = section.children
+        varsCopy.sourcePath = section.file
+        output.warn "Rendering document file $sourceFile.name"
         varsCopy.content = engine.render(sourceFile.getText("UTF-8"), context)
 
         // First create the section content, which usually consists of a header
@@ -468,7 +519,15 @@ class DocPublisher {
             ant = new AntBuilder()
         }
         def metaProps = DocPublisher.metaClass.properties
-        def props = engineProperties ?: new Properties()
+        Properties props
+        if(engineProperties != null) {
+            props = engineProperties
+        }
+        else {
+            props = new Properties()
+            engineProperties = props
+        }
+
 
         if(propertiesFile?.exists()) {
             if(propertiesFile.name.endsWith('.properties')) {
@@ -478,7 +537,7 @@ class DocPublisher {
             }
             else if(propertiesFile.name.endsWith('.yml')) {
                 propertiesFile.withInputStream { input ->
-                    def ymls = new Yaml().loadAll(input)
+                    def ymls = new Yaml(new SafeConstructor()).loadAll(input)
                     for(yml in ymls) {
                         if(yml instanceof Map) {
                             def config = yml.grails?.doc
@@ -506,7 +565,12 @@ class DocPublisher {
         context = new BaseInitialRenderContext()
         initContext(context, "..")
 
-        engine = new DocEngine(context)
+        if(asciidoc) {
+            engine = new AsciiDocEngine(context)
+        }
+        else {
+            engine = new DocEngine(context)
+        }
 
         engine.engineProperties = props
         context.renderEngine = engine

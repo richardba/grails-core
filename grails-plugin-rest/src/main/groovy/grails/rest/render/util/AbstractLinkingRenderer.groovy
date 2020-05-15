@@ -22,11 +22,8 @@ import grails.rest.render.Renderer
 import grails.rest.render.RendererRegistry
 import grails.util.Environment
 import grails.util.GrailsWebUtil
-import groovy.json.StreamingJsonBuilder
-import groovy.json.StreamingJsonBuilder.StreamingJsonDelegate
 import groovy.transform.CompileStatic
 import groovy.transform.TypeCheckingMode
-import org.grails.core.util.ClassPropertyFetcher
 import org.grails.core.artefact.DomainClassArtefactHandler
 import grails.core.support.proxy.DefaultProxyHandler
 import grails.core.support.proxy.EntityProxyHandler
@@ -182,7 +179,7 @@ abstract class AbstractLinkingRenderer<T> extends AbstractIncludeExcludeRenderer
 
             } else if ((a instanceof ToOne) && (proxyHandler instanceof EntityProxyHandler)) {
                 if (associatedEntity) {
-                    final proxy = ClassPropertyFetcher.forClass(object.getClass()).getPropertyValue(object, propertyName)
+                    final proxy = mappingContext.getEntityReflector(a.owner).getProperty(object, propertyName)
                     final id = proxyHandler.getProxyIdentifier(proxy)
                     final href = linkGenerator.link(resource: associatedEntity.decapitalizedName, id: id, method: HttpMethod.GET, absolute: absoluteLinks)
                     final associationTitle = getLinkTitle(associatedEntity, locale)

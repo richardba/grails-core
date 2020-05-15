@@ -2,14 +2,12 @@ package org.grails.web.binding
 
 import grails.artefact.Artefact
 import grails.persistence.Entity
-import grails.test.mixin.Mock
-import grails.test.mixin.TestFor
+import grails.testing.gorm.DomainUnitTest
+import grails.testing.web.controllers.ControllerUnitTest
 import spock.lang.Issue
 import spock.lang.Specification
 
-@TestFor(MyController)
-@Mock(MyDomain)
-class GrailsParameterMapBindingSpec extends Specification {
+class GrailsParameterMapBindingSpec extends Specification implements ControllerUnitTest<MyController>, DomainUnitTest<MyDomain> {
     
     void 'Test binding body to command object'() {
         when: 'the body contains JSON'
@@ -93,6 +91,7 @@ class GrailsParameterMapBindingSpec extends Specification {
     
     void 'Test binding with the request when the request has a body'() {
         when: 'request parameters are present'
+        request.method = 'POST'
         request.json = '{"name":"JSON Name"}'
         controller.bindWithRequest()
         
@@ -102,6 +101,7 @@ class GrailsParameterMapBindingSpec extends Specification {
     
     void 'Test binding with the request when the request has both a body and request parameters'() {
         when: 'request parameters are present and the request has a body'
+        request.method = 'POST'
         request.json = '{"name":"JSON Name"}'
         params.name = 'Request Parameter Name'
         controller.bindWithRequest()

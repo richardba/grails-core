@@ -15,6 +15,7 @@
  */
 package grails.ui.command
 
+import grails.config.Settings
 import grails.dev.commands.ApplicationContextCommandRegistry
 import grails.dev.commands.ExecutionContext
 import grails.ui.support.DevelopmentGrailsApplication
@@ -34,7 +35,7 @@ class GrailsApplicationContextCommandRunner extends DevelopmentGrailsApplication
 
     String commandName
 
-    protected GrailsApplicationContextCommandRunner(String commandName, Object... sources) {
+    protected GrailsApplicationContextCommandRunner(String commandName, Class<?>... sources) {
         super(sources)
         this.commandName = commandName
     }
@@ -43,6 +44,11 @@ class GrailsApplicationContextCommandRunner extends DevelopmentGrailsApplication
     ConfigurableApplicationContext run(String... args) {
         def command = ApplicationContextCommandRegistry.findCommand(commandName)
         if(command) {
+
+            Object skipBootstrap = command.hasProperty("skipBootstrap")?.getProperty(command)
+            if (skipBootstrap instanceof Boolean && !System.getProperty(Settings.SETTING_SKIP_BOOTSTRAP)) {
+                System.setProperty(Settings.SETTING_SKIP_BOOTSTRAP, skipBootstrap.toString())
+            }
 
             ConfigurableApplicationContext ctx = null
             try {

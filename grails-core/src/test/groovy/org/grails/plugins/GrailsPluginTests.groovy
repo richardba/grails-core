@@ -1,20 +1,19 @@
 package org.grails.plugins
 
-import grails.plugins.exceptions.PluginException
-import grails.util.BuildScope
-import grails.util.Environment
-
 import grails.core.DefaultGrailsApplication
-import org.grails.core.exceptions.GrailsConfigurationException
-import org.grails.plugins.DefaultGrailsPlugin
 import grails.plugins.DefaultGrailsPluginManager
+import grails.util.Environment
+import org.junit.jupiter.api.Test
+
+import static org.junit.jupiter.api.Assertions.*
 
 /**
  * @author Graeme Rocher
  * @since 1.0
  */
-class GrailsPluginTests extends GroovyTestCase {
+class GrailsPluginTests {
 
+    @Test
     void testPluginPath() {
 
         def gcl = new GroovyClassLoader()
@@ -31,6 +30,7 @@ class TestOneGrailsPlugin {
         assertEquals "/plugins/test-one-0.1", plugin.pluginPath
     }
 
+    @Test
     void testPluginPathLongName() {
 
         def gcl = new GroovyClassLoader()
@@ -47,6 +47,7 @@ class TestOnetwoThreeFourfiveGrailsPlugin {
         assertEquals "/plugins/test-onetwo-three-fourfive-0.1", plugin.pluginPath
     }
 
+    @Test
     void testPluginPathCamelCase() {
 
         def gcl = new GroovyClassLoader()
@@ -63,6 +64,7 @@ class TestOneGrailsPlugin {
         assertEquals "/plugins/testOne-0.1", plugin.pluginPathCamelCase
     }
 
+    @Test
     void testPluginPathCamelCaseLongName() {
 
         def gcl = new GroovyClassLoader()
@@ -79,6 +81,7 @@ class TestOnetwoThreeFourfiveGrailsPlugin {
         assertEquals "/plugins/testOnetwoThreeFourfive-0.1", plugin.pluginPathCamelCase
     }
 
+    @Test
     void testFileSystemName() {
 
         def gcl = new GroovyClassLoader()
@@ -95,107 +98,7 @@ class TestOneGrailsPlugin {
         assertEquals "test-one-0.1", plugin.fileSystemName
     }
 
-    void testSimpleScopeEvaluation() {
-        def gcl = new GroovyClassLoader()
-        def test1 = gcl.parseClass('''
-class TestGrailsPlugin {
-    def version = 0.1
-    def scopes = 'test'
-}
-''')
-
-        DefaultGrailsApplication application = new DefaultGrailsApplication()
-        def plugin = new DefaultGrailsPlugin(test1, application)
-
-        assertTrue plugin.supportsScope(BuildScope.TEST)
-        assertFalse plugin.supportsScope(BuildScope.WAR)
-        plugin.addExclude(BuildScope.TEST)
-        assertFalse plugin.supportsScope(BuildScope.TEST)
-    }
-
-    void testListScopeEvaluation() {
-        def gcl = new GroovyClassLoader()
-        def test1 = gcl.parseClass('''
-class TestGrailsPlugin {
-    def version = 0.1
-    def scopes = ['test','war']
-}
-''')
-
-        DefaultGrailsApplication application = new DefaultGrailsApplication()
-        def plugin = new DefaultGrailsPlugin(test1, application)
-
-        assertTrue plugin.supportsScope(BuildScope.TEST)
-        assertTrue plugin.supportsScope(BuildScope.WAR)
-        assertFalse plugin.supportsScope(BuildScope.RUN)
-    }
-
-    void testIncludesExcludesScopeEvaluation() {
-        def gcl = new GroovyClassLoader()
-        def test1 = gcl.parseClass('''
-class TestGrailsPlugin {
-    def version = 0.1
-    def scopes = [includes:'test',excludes:'war']
-}
-''')
-
-        DefaultGrailsApplication application = new DefaultGrailsApplication()
-        def plugin = new DefaultGrailsPlugin(test1, application)
-
-        assertTrue plugin.supportsScope(BuildScope.TEST)
-        assertFalse plugin.supportsScope(BuildScope.WAR)
-        assertFalse plugin.supportsScope(BuildScope.RUN)
-    }
-
-    void testExcludesScopeEvaluation() {
-        def gcl = new GroovyClassLoader()
-        def test1 = gcl.parseClass('''
-class TestGrailsPlugin {
-    def version = 0.1
-    def scopes = [excludes:'war']
-}
-''')
-
-        DefaultGrailsApplication application = new DefaultGrailsApplication()
-        def plugin = new DefaultGrailsPlugin(test1, application)
-
-        assertTrue plugin.supportsScope(BuildScope.TEST)
-        assertFalse plugin.supportsScope(BuildScope.WAR)
-        assertTrue plugin.supportsScope(BuildScope.RUN)
-    }
-
-    void testIncludesWithListScopeEvaluation() {
-        def gcl = new GroovyClassLoader()
-        def test1 = gcl.parseClass('''
-class TestGrailsPlugin {
-    def version = 0.1
-    def scopes = [includes:['run','test']]
-}
-''')
-
-        DefaultGrailsApplication application = new DefaultGrailsApplication()
-        def plugin = new DefaultGrailsPlugin(test1, application)
-
-        assertTrue plugin.supportsScope(BuildScope.TEST)
-        assertFalse plugin.supportsScope(BuildScope.WAR)
-        assertTrue plugin.supportsScope(BuildScope.RUN)
-    }
-
-    void testInvalidScopeName() {
-        def gcl = new GroovyClassLoader()
-        def test1 = gcl.parseClass('''
-class TestGrailsPlugin {
-    def version = 0.1
-    def scopes = [includes:['run','bad']]
-}
-''')
-
-        DefaultGrailsApplication application = new DefaultGrailsApplication()
-        shouldFail(PluginException) {
-            new DefaultGrailsPlugin(test1, application)
-        }
-    }
-
+    @Test
     void testSimpleEnvironmentEvaluation() {
         def gcl = new GroovyClassLoader()
         def test1 = gcl.parseClass('''
@@ -212,6 +115,7 @@ class TestGrailsPlugin {
         assertFalse plugin.supportsEnvironment(Environment.PRODUCTION)
     }
 
+    @Test
     void testListEnvironmentEvaluation() {
         def gcl = new GroovyClassLoader()
         def test1 = gcl.parseClass('''
@@ -229,6 +133,7 @@ class TestGrailsPlugin {
         assertFalse plugin.supportsEnvironment(Environment.PRODUCTION)
     }
 
+    @Test
     void testEnvironmentsAndLoadIntoPluginManager() {
         def gcl = new GroovyClassLoader()
         def test1 = gcl.parseClass('''
@@ -244,10 +149,14 @@ class TestGrailsPlugin {
         pluginManager.loadPlugins()
         assertNotNull pluginManager.getGrailsPlugin("test")
 
-        System.setProperty(Environment.KEY, Environment.PRODUCTION.getName())
+        try {
+            System.setProperty(Environment.KEY, Environment.PRODUCTION.getName())
 
-        pluginManager = new DefaultGrailsPluginManager([test1] as Class[], application)
-        pluginManager.loadPlugins()
-        assertNull pluginManager.getGrailsPlugin("test")
+            pluginManager = new DefaultGrailsPluginManager([test1] as Class[], application)
+            pluginManager.loadPlugins()
+            assertNull pluginManager.getGrailsPlugin("test")
+        } finally {
+            System.setProperty(Environment.KEY, Environment.TEST.getName())
+        }
     }
 }

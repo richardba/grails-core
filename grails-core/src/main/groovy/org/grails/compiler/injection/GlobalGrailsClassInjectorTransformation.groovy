@@ -118,6 +118,11 @@ class GlobalGrailsClassInjectorTransformation implements ASTTransformation, Comp
                         classNode.addAnnotation(annotationNode)
 
                         List<ClassInjector> injectors = cache[handler.type]
+                        for (ClassInjector injector: injectors) {
+                            if (injector instanceof CompilationUnitAware) {
+                                ((CompilationUnitAware)injector).compilationUnit = compilationUnit
+                            }
+                        }
                         ArtefactTypeAstTransformation.performInjection(source, classNode, injectors)
                         TraitInjectionUtils.processTraitsForNode(source, classNode, handler.getType(), compilationUnit)
                     }
@@ -143,9 +148,14 @@ class GlobalGrailsClassInjectorTransformation implements ASTTransformation, Comp
     }
 
     static File resolveCompilationTargetDirectory(SourceUnit source) {
-        File targetDirectory = source.configuration.targetDirectory
-        if(targetDirectory==null && source.getClass().name == 'org.codehaus.jdt.groovy.control.EclipseSourceUnit') {
+        File targetDirectory = null
+        if(source.getClass().name == 'org.codehaus.jdt.groovy.control.EclipseSourceUnit') {
             targetDirectory = GroovyEclipseCompilationHelper.resolveEclipseCompilationTargetDirectory(source)
+        } else {
+			targetDirectory = source.configuration.targetDirectory
+		}
+        if(targetDirectory == null) {
+            targetDirectory = new File('build/classes/main')
         }
         return targetDirectory
     }
@@ -194,7 +204,7 @@ class GlobalGrailsClassInjectorTransformation implements ASTTransformation, Comp
         pluginClasses.addAll(pendingPluginClasses)
 
         // if the class being transformed is a *GrailsPlugin class then if it doesn't exist create it
-        if (pluginClassNode) {
+        if (pluginClassNode && !pluginClassNode.isAbstract()) {
             if (!pluginXmlExists) {
                 writePluginXml(pluginClassNode, pluginVersion, pluginXmlFile, pluginClasses)
             } else {

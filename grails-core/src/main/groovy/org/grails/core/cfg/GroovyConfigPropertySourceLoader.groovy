@@ -19,7 +19,7 @@ import grails.util.BuildSettings
 import grails.util.Environment
 import grails.util.Metadata
 import groovy.transform.CompileStatic
-import groovy.util.logging.Commons
+import groovy.util.logging.Slf4j
 import org.grails.config.NavigableMap
 import org.grails.config.NavigableMapPropertySource
 import org.grails.core.exceptions.GrailsConfigurationException
@@ -28,6 +28,8 @@ import org.springframework.core.env.MapPropertySource
 import org.springframework.core.env.PropertySource
 import org.springframework.core.io.Resource
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 /**
  * Adds support for defining a 'application.groovy' file in ConfigSlurper format in order to configure Spring Boot within Grails
  *
@@ -35,44 +37,52 @@ import org.springframework.core.io.Resource
  * @since 3.0
  */
 @CompileStatic
-@Commons
+@Slf4j
 class GroovyConfigPropertySourceLoader implements PropertySourceLoader {
 
     final String[] fileExtensions = ['groovy'] as String[]
 
+    AtomicBoolean loaded = new AtomicBoolean(false)
+
     @Override
-    PropertySource<?> load(String name, Resource resource, String profile) {
-        load(name, resource, profile, [])
+    List<PropertySource<?>> load(String name, Resource resource) throws IOException {
+        return load(name, resource, Collections.<String>emptyList())
     }
 
-    PropertySource<?> load(String name, Resource resource, String profile, List<String> filteredKeys) throws IOException {
-        def env = Environment.current.name
-        if(profile == null || env == profile) {
+    List<PropertySource<?>> load(String name, Resource resource, List<String> filteredKeys) throws IOException {
+        if (loaded.compareAndSet(false, true)) {
+            def env = Environment.current.name
 
             if(resource.exists()) {
                 ConfigSlurper configSlurper = env ? new ConfigSlurper(env) : new ConfigSlurper()
 
                 configSlurper.setBinding(userHome: System.getProperty('user.home'),
                         grailsHome: BuildSettings.GRAILS_HOME?.absolutePath,
-                        springProfile: profile,
                         appName: Metadata.getCurrent().getApplicationName(),
                         appVersion: Metadata.getCurrent().getApplicationVersion() )
                 try {
                     def configObject = configSlurper.parse(resource.URL)
 
-                    filteredKeys?.each { key ->
+                    for(key in filteredKeys) {
                         configObject.remove(key)
                     }
 
                     def propertySource = new NavigableMap()
                     propertySource.merge(configObject, false)
-                    return new NavigableMapPropertySource(name, propertySource)
+
+                    Resource runtimeResource = resource.createRelative( resource.filename.replace('application', 'runtime') )
+                    if(runtimeResource.exists()) {
+                        def runtimeConfig = configSlurper.parse( runtimeResource.getURL() )
+                        propertySource.merge(runtimeConfig, false)
+                    }
+
+                    return Collections.<PropertySource>singletonList(new NavigableMapPropertySource(name, propertySource))
                 } catch (Throwable e) {
                     log.error("Unable to load $resource.filename: $e.message", e)
                     throw new GrailsConfigurationException("Error loading $resource.filename due to [${e.getClass().name}]: $e.message", e)
                 }
             }
         }
-        return null
+        return Collections.emptyList()
     }
 }

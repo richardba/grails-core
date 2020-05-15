@@ -16,22 +16,13 @@
 package org.grails.web.util;
 
 import grails.config.Config;
-import grails.util.GrailsWebUtil;
-
-import java.io.UnsupportedEncodingException;
-import java.net.URLDecoder;
-import java.net.URLEncoder;
-import java.util.*;
-
-import javax.servlet.ServletContext;
-import javax.servlet.ServletRequest;
-import javax.servlet.http.HttpServletRequest;
-
 import grails.core.GrailsApplication;
 import grails.util.GrailsStringUtils;
+import grails.util.GrailsWebUtil;
 import grails.web.mime.MimeType;
 import grails.web.servlet.mvc.GrailsParameterMap;
 import org.grails.web.servlet.mvc.GrailsWebRequest;
+import org.grails.web.servlet.view.CompositeViewResolver;
 import org.springframework.context.ApplicationContext;
 import org.springframework.util.Assert;
 import org.springframework.web.context.ContextLoader;
@@ -46,6 +37,22 @@ import org.springframework.web.servlet.ViewResolver;
 import org.springframework.web.servlet.handler.WebRequestHandlerInterceptorAdapter;
 import org.springframework.web.servlet.view.UrlBasedViewResolver;
 import org.springframework.web.util.UrlPathHelper;
+
+import javax.servlet.ServletContext;
+import javax.servlet.ServletRequest;
+import javax.servlet.http.HttpServletRequest;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Utility methods to access commons objects and perform common
@@ -65,6 +72,7 @@ public class WebUtils extends org.springframework.web.util.WebUtils {
     public static final String GRAILS_DISPATCH_EXTENSION = ".dispatch";
     public static final String GRAILS_SERVLET_PATH = "/grails";
     public static final String EXCEPTION_ATTRIBUTE = "exception";
+    public static final String ASYNC_REQUEST_URI_ATTRIBUTE = "javax.servlet.async.request_uri";
 
     public static ViewResolver lookupViewResolver(ServletContext servletContext) {
         WebApplicationContext wac = WebApplicationContextUtils
@@ -73,15 +81,14 @@ public class WebUtils extends org.springframework.web.util.WebUtils {
     }
 
     public static ViewResolver lookupViewResolver(ApplicationContext wac) {
-        if (wac.containsBean("jspViewResolver")) {
-            return wac.getBean("jspViewResolver", ViewResolver.class);
-        }
-        String[] beanNames = wac.getBeanNamesForType(ViewResolver.class);
-        if (beanNames.length > 0) {
-            String beanName = beanNames[0];
-            return wac.getBean(beanName, ViewResolver.class);
-        }
-        return null;
+        final CompositeViewResolver viewResolver = wac.getBean(CompositeViewResolver.BEAN_NAME, CompositeViewResolver.class);
+
+        return new ViewResolver() {
+            @Override
+            public View resolveViewName(String viewName, Locale locale) throws Exception {
+                return viewResolver.resolveView(viewName, locale);
+            }
+        };
     }
 
     /**
@@ -187,6 +194,9 @@ public class WebUtils extends org.springframework.web.util.WebUtils {
         return viewResolver.resolveViewName(addViewPrefix(viewName, controllerName), locale);
     }
 
+    /**
+     * @deprecated Does not take into account the url converter
+     */
     public static String addViewPrefix(String viewName) {
         GrailsWebRequest webRequest = GrailsWebRequest.lookup();
         return addViewPrefix(viewName, webRequest != null ? webRequest.getControllerName() : null);
@@ -347,10 +357,10 @@ public class WebUtils extends org.springframework.web.util.WebUtils {
     @SuppressWarnings("rawtypes")
     private static boolean appendEntry(Map.Entry entry, StringBuilder queryString, String encoding, String path) throws UnsupportedEncodingException {
         String name = entry.getKey().toString();
-        if (name.indexOf(".") > -1) return false; // multi-d params handled by recursion
-
         Object value = entry.getValue();
-        if (value == null) value = "";
+
+        if (name.indexOf(".") > -1 && (value instanceof GrailsParameterMap)) return false; // multi-d params handled by recursion
+        else if (value == null) value = "";
         else if (value instanceof GrailsParameterMap) {
             GrailsParameterMap child = (GrailsParameterMap)value;
             Set nestedEntrySet = child.entrySet();
@@ -485,6 +495,25 @@ public class WebUtils extends org.springframework.web.util.WebUtils {
         return request.getAttribute(FORWARD_REQUEST_URI_ATTRIBUTE) != null;
     }
 
+    /**
+     * Check whether the given request is a forward request
+     *
+     * @param request The request
+     * @return True if it is a forward request
+     */
+    public static boolean isAsync(HttpServletRequest request) {
+        return request.getAttribute(ASYNC_REQUEST_URI_ATTRIBUTE) != null;
+    }
+
+    /**
+     * Check whether the given request is a forward request
+     *
+     * @param request The request
+     * @return True if it is a forward request
+     */
+    public static boolean isError(HttpServletRequest request) {
+        return request.getAttribute(ERROR_STATUS_CODE_ATTRIBUTE) != null;
+    }
     /**
      * Check whether the given request is an include request
      *

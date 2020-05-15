@@ -18,16 +18,15 @@ package org.grails.cli
 import grails.build.logging.GrailsConsole
 import grails.build.proxy.SystemPropertiesAuthenticator
 import grails.config.ConfigMap
+import grails.io.support.SystemOutErrCapturer
 import grails.io.support.SystemStreamsRedirector
 import grails.util.BuildSettings
 import grails.util.Environment
 import groovy.transform.Canonical
 import groovy.transform.CompileStatic
 import jline.UnixTerminal
-import jline.console.ConsoleReader
 import jline.console.UserInterruptException
 import jline.console.completer.ArgumentCompleter
-import jline.console.completer.Completer
 import jline.internal.NonBlockingInputStream
 import org.gradle.tooling.BuildActionExecuter
 import org.gradle.tooling.BuildCancelledException
@@ -37,7 +36,6 @@ import org.grails.build.parsing.CommandLineParser
 import org.grails.build.parsing.DefaultCommandLine
 import org.grails.cli.gradle.ClasspathBuildAction
 import org.grails.cli.gradle.GradleAsyncInvoker
-import org.grails.cli.gradle.GradleUtil
 import org.grails.cli.gradle.cache.MapReadingCachedGradleOperation
 import org.grails.cli.interactive.completers.EscapingFileNameCompletor
 import org.grails.cli.interactive.completers.RegexCompletor
@@ -46,13 +44,12 @@ import org.grails.cli.interactive.completers.StringsCompleter
 import org.grails.cli.profile.*
 import org.grails.cli.profile.commands.CommandCompleter
 import org.grails.cli.profile.commands.CommandRegistry
+import org.grails.cli.profile.repository.GrailsRepositoryConfiguration
 import org.grails.cli.profile.repository.MavenProfileRepository
 import org.grails.cli.profile.repository.StaticJarProfileRepository
 import org.grails.config.CodeGenConfig
 import org.grails.config.NavigableMap
 import org.grails.exceptions.ExceptionUtils
-import org.grails.gradle.plugin.model.GrailsClasspath
-import org.springframework.boot.cli.compiler.grape.RepositoryConfiguration
 
 import java.util.concurrent.*
 
@@ -118,7 +115,7 @@ class GrailsCli {
     CodeGenConfig applicationConfig
     ProjectContext projectContext
     Profile profile = null
-    List<RepositoryConfiguration> profileRepositories = [MavenProfileRepository.DEFAULT_REPO]
+    List<GrailsRepositoryConfiguration> profileRepositories = [MavenProfileRepository.DEFAULT_REPO]
 
     /**
      * Obtains a value from USER_HOME/.grails/settings.yml
@@ -212,7 +209,6 @@ class GrailsCli {
         if(mainCommandLine.hasOption(CommandLine.VERSION_ARGUMENT) || mainCommandLine.hasOption('v')) {
             def console = GrailsConsole.instance
             console.addStatus("Grails Version: ${GrailsCli.getPackage().implementationVersion}")
-            console.addStatus("Groovy Version: ${GroovySystem.version}")
             console.addStatus("JVM Version: ${System.getProperty('java.version')}")
             exit(0)
         }
@@ -228,6 +224,7 @@ class GrailsCli {
 
         if(mainCommandLine.environmentSet) {
             System.setProperty(Environment.KEY, mainCommandLine.environment)
+            Environment.reset()
         }
 
         File grailsAppDir=new File("grails-app")
@@ -320,7 +317,15 @@ class GrailsCli {
                     def snapshots = data.get('snapshotsEnabled')
                     if(uri != null) {
                         boolean enableSnapshots = snapshots != null ? Boolean.valueOf(snapshots.toString()) : false
-                        profileRepositories.add( new RepositoryConfiguration(repoName.toString(), new URI(uri.toString()), enableSnapshots))
+                        GrailsRepositoryConfiguration repositoryConfiguration
+                        final String username = data.get('username')
+                        final String password = data.get('password')
+                        if (username != null && password != null) {
+                            repositoryConfiguration = new GrailsRepositoryConfiguration(repoName.toString(), new URI(uri.toString()), enableSnapshots, username, password)
+                        } else {
+                            repositoryConfiguration = new GrailsRepositoryConfiguration(repoName.toString(), new URI(uri.toString()), enableSnapshots)
+                        }
+                        profileRepositories.add(repositoryConfiguration)
                     }
                 }
             }
@@ -374,7 +379,6 @@ class GrailsCli {
                         console.updateStatus("Initializing application. Please wait...")
                         try {
                             initializeApplication(context.commandLine)
-                            GradleUtil.prepareConnection(projectContext.baseDir)
                             setupCompleters()
                         } finally {
                             tiggerAppLoad = false
@@ -434,9 +438,6 @@ class GrailsCli {
         boolean firstRun = true
         while(keepRunning) {
             try {
-                if(integrateGradle) {
-                    GradleUtil.prepareConnection(projectContext.baseDir)
-                }
                 if(firstRun) {
                     console.addStatus("Enter a command name to run. Use TAB for completion:")
                     firstRun = false
@@ -524,6 +525,11 @@ class GrailsCli {
                 def dependencyMap = new MapReadingCachedGradleOperation<List<URL>>(projectContext, ".dependencies") {
 
                     @Override
+                    void updateStatusMessage() {
+                        GrailsConsole.instance.updateStatus("Resolving Dependencies. Please wait...")
+                    }
+
+                    @Override
                     List<URL> createMapValue(Object value) {
                         if(value instanceof List) {
                             return ((List)value).collect() { new URL(it.toString()) } as List<URL>
@@ -537,9 +543,13 @@ class GrailsCli {
                     @Override
                     Map<String, List<URL>> readFromGradle(ProjectConnection connection) {
                         def config = applicationConfig
-                        GrailsClasspath grailsClasspath = GradleUtil.runBuildActionWithConsoleOutput(connection, projectContext, new ClasspathBuildAction()) { BuildActionExecuter<GrailsClasspath> executer ->
-                            executer.withArguments("-Dgrails.profile=${config.navigate("grails", "profile")}")
-                        }
+
+                        BuildActionExecuter buildActionExecuter = connection.action(new ClasspathBuildAction())
+                        buildActionExecuter.standardOutput = System.out
+                        buildActionExecuter.standardError  = System.err
+                        buildActionExecuter.withArguments("-Dgrails.profile=${config.navigate("grails", "profile")}")
+
+                        def grailsClasspath = buildActionExecuter.run()
                         if(grailsClasspath.error) {
                             GrailsConsole.instance.error("${grailsClasspath.error} Type 'gradle dependencies' for more information")
                             exit 1
@@ -559,7 +569,7 @@ class GrailsCli {
                     // ignore
                 }
                 def profiles = (List<URL>)dependencyMap.get("profiles")
-                URLClassLoader classLoader = new URLClassLoader(urls as URL[])
+                URLClassLoader classLoader = new URLClassLoader(urls as URL[], Thread.currentThread().contextClassLoader)
                 this.profileRepository = new StaticJarProfileRepository(classLoader, profiles as URL[])
                 Thread.currentThread().contextClassLoader = classLoader
             }
@@ -574,14 +584,12 @@ class GrailsCli {
     private CodeGenConfig loadApplicationConfig() {
         CodeGenConfig config = new CodeGenConfig()
         File applicationYml = new File("grails-app/conf/application.yml")
+        File applicationGroovy = new File("grails-app/conf/application.groovy")
         if(applicationYml.exists()) {
             config.loadYml(applicationYml)
         }
-        else {
-            applicationYml = new File("application.yml")
-            if(applicationYml.exists()) {
-                config.loadYml(applicationYml)
-            }
+        if(applicationGroovy.exists()) {
+            config.loadGroovy(applicationGroovy)
         }
         config
     }
@@ -663,10 +671,9 @@ class GrailsCli {
     }
 
 
-    @Canonical
-    public static class ExecutionContextImpl implements ExecutionContext {
+    static class ExecutionContextImpl implements ExecutionContext {
         CommandLine commandLine
-        @Delegate(excludes = 'getConsole') ProjectContext projectContext
+        @Delegate(excludes = ['getConsole', 'getBaseDir']) ProjectContext projectContext
         GrailsConsole console = GrailsConsole.getInstance()
 
         ExecutionContextImpl(CodeGenConfig config) {
@@ -683,13 +690,13 @@ class GrailsCli {
 
         private List<CommandCancellationListener> cancelListeners=[]
         
-        @Override
-        public void addCancelledListener(CommandCancellationListener listener) {
+        @Override //Fully qualified name to work around Groovy bug
+        void addCancelledListener(org.grails.cli.profile.CommandCancellationListener listener) {
             cancelListeners << listener
         }    
         
         @Override
-        public void cancel() {
+        void cancel() {
             for(CommandCancellationListener listener : cancelListeners) {
                 try {
                     listener.commandCancelled()
@@ -697,6 +704,11 @@ class GrailsCli {
                     console.error("Error notifying listener about cancelling command", e)
                 }
             }
+        }
+
+        @Override
+        File getBaseDir() {
+            this.projectContext?.baseDir ?: new File(".")
         }
     }
     

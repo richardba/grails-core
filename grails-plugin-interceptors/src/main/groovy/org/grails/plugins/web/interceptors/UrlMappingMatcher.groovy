@@ -17,16 +17,12 @@ package org.grails.plugins.web.interceptors
 
 import grails.artefact.Interceptor
 import grails.interceptors.Matcher
-import grails.util.Environment
 import grails.web.mapping.UrlMappingInfo
 import groovy.transform.CompileStatic
-import org.apache.commons.lang.builder.HashCodeBuilder
+import org.codehaus.groovy.util.HashCodeHelper
 import org.springframework.util.AntPathMatcher
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.regex.Pattern
-
-
 
 /**
  * Used to match {@link UrlMappingInfo} instance by {@link grails.artefact.Interceptor} instances
@@ -38,7 +34,6 @@ import java.util.regex.Pattern
 class UrlMappingMatcher implements Matcher {
 
     public static Pattern WILD_CARD_PATTERN = ~/.*/
-    private static final Map<Integer, Boolean> CACHED_MATCHES = new ConcurrentHashMap<>()
 
     protected Pattern controllerRegex = WILD_CARD_PATTERN
     protected Pattern actionRegex = WILD_CARD_PATTERN
@@ -57,6 +52,10 @@ class UrlMappingMatcher implements Matcher {
     }
 
     boolean doesMatch(String uri, UrlMappingInfo info) {
+        return doesMatch(uri, info, null)
+    }
+
+    boolean doesMatch(String uri, UrlMappingInfo info, String method) {
         boolean hasUriPatterns = !uriPatterns.isEmpty()
 
         boolean isExcluded = this.isExcluded(uri, info)
@@ -71,14 +70,7 @@ class UrlMappingMatcher implements Matcher {
                     }
                 }
             } else if (info) {
-                def infoCode = hashCode(info)
-                Boolean matched = CACHED_MATCHES.get(infoCode)
-                if (matched != null) return matched
-
-                if (doesMatchInternal(info)) {
-                    if (Environment.current == Environment.PRODUCTION) {
-                        CACHED_MATCHES.put(infoCode, Boolean.TRUE)
-                    }
+                if (doesMatchInternal(info, method)) {
                     return true
                 }
             }
@@ -87,8 +79,10 @@ class UrlMappingMatcher implements Matcher {
     }
 
     protected boolean isExcluded(String uri, UrlMappingInfo info) {
-        if( uriExcludePatterns.any() { String p -> pathMatcher.match(p, uri)} ) {
-            return true
+        for(pattern in uriExcludePatterns) {
+            if(pathMatcher.match(pattern, uri)) {
+                return true
+            }
         }
         if(info) {
             for(exclude in excludes) {
@@ -97,15 +91,15 @@ class UrlMappingMatcher implements Matcher {
                 }
             }
         }
-        false
+        return false
     }
 
-    protected boolean doesMatchInternal(UrlMappingInfo info) {
+    protected boolean doesMatchInternal(UrlMappingInfo info, String method) {
         (info != null &&
             ((info.controllerName ?: '') ==~ controllerRegex) &&
             ((info.actionName ?: '') ==~ actionRegex) &&
             ((info.namespace ?: '') ==~ namespaceRegex) &&
-            ((info.httpMethod ?: '') ==~ methodRegex))
+            ((method  ?: info.httpMethod ?: '') ==~ methodRegex))
     }
 
     @Override
@@ -153,6 +147,11 @@ class UrlMappingMatcher implements Matcher {
     Matcher excludes(Closure<Boolean> condition) {
         excludes << new ClosureExclude(interceptor, condition)
         return this
+    }
+
+    @Override
+    boolean isExclude() {
+        return excludes || uriExcludePatterns
     }
 
     private Pattern regexMatch(Map arguments, String type, Pattern defaultPattern = WILD_CARD_PATTERN) {
@@ -213,9 +212,9 @@ class UrlMappingMatcher implements Matcher {
     }
 
     protected int hashCode(UrlMappingInfo info) {
-        new HashCodeBuilder()
-            .append(interceptor)
-            .append(info)
-            .toHashCode()
+        int hash = HashCodeHelper.initHash()
+        hash = HashCodeHelper.updateHash(hash, interceptor)
+        hash = HashCodeHelper.updateHash(hash, info)
+        return hash
     }
 }

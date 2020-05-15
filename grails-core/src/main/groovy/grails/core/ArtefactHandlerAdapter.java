@@ -39,7 +39,7 @@ import java.net.URL;
  * @since 1.0
  */
 @SuppressWarnings( "deprecation" )
-public class ArtefactHandlerAdapter implements ArtefactHandler, org.codehaus.groovy.grails.commons.ArtefactHandler {
+public class ArtefactHandlerAdapter implements ArtefactHandler {
 
     protected String type;
     protected Class<?> grailsClassType;
@@ -103,7 +103,7 @@ public class ArtefactHandlerAdapter implements ArtefactHandler, org.codehaus.gro
     }
 
     protected boolean isValidArtefactClassNode(ClassNode classNode, int modifiers) {
-        return !classNode.isEnum() && !classNode.isInterface() && !Modifier.isAbstract(modifiers) && !(classNode instanceof InnerClassNode);
+        return !classNode.isEnum() && !classNode.isInterface() && !(classNode instanceof InnerClassNode);
     }
 
     /**

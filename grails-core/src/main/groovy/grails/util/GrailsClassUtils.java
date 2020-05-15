@@ -24,6 +24,8 @@ import groovy.lang.MetaClass;
 import groovy.lang.MetaClassRegistry;
 import groovy.lang.MetaProperty;
 import groovy.util.ConfigObject;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.BeanInstantiationException;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.BeanWrapper;
@@ -60,6 +62,7 @@ import java.util.TreeSet;
  */
 public class GrailsClassUtils {
 
+    private static final Log LOG = LogFactory.getLog(GrailsClassUtils.class);
     public static final Map<Class<?>, Class<?>> PRIMITIVE_TYPE_COMPATIBLE_CLASSES = new HashMap<Class<?>, Class<?>>();
 
     /**
@@ -322,8 +325,11 @@ public class GrailsClassUtils {
         }
 
         Set<PropertyDescriptor> properties = new HashSet<PropertyDescriptor>();
+        PropertyDescriptor descriptor = null;
         try {
-            for (PropertyDescriptor descriptor : BeanUtils.getPropertyDescriptors(clazz)) {
+            PropertyDescriptor[] descriptors = BeanUtils.getPropertyDescriptors(clazz);
+            for (int i = 0; i < descriptors.length; i++) {
+                descriptor = descriptors[i];
                 Class<?> currentPropertyType = descriptor.getPropertyType();
                 if (isTypeInstanceOfPropertyType(propertyType, currentPropertyType)) {
                     properties.add(descriptor);
@@ -331,6 +337,11 @@ public class GrailsClassUtils {
             }
         }
         catch (Exception e) {
+            if(descriptor == null) {
+                LOG.error(String.format("Got exception while checking property descriptors for class %s", clazz.getName()), e);
+            } else {
+                LOG.error(String.format("Got exception while checking PropertyDescriptor.propertyType for field %s.%s", clazz.getName(), descriptor.getName()), e);
+            }
             // if there are any errors in instantiating just return null for the moment
             return new PropertyDescriptor[0];
         }
@@ -352,14 +363,23 @@ public class GrailsClassUtils {
         if (clazz == null || propertySuperType == null) return new PropertyDescriptor[0];
 
         Set<PropertyDescriptor> properties = new HashSet<PropertyDescriptor>();
+        PropertyDescriptor descriptor = null;
         try {
-            for (PropertyDescriptor descriptor : BeanUtils.getPropertyDescriptors(clazz)) {
+            PropertyDescriptor[] descriptors = BeanUtils.getPropertyDescriptors(clazz);
+            for (int i = 0; i < descriptors.length; i++) {
+                descriptor = descriptors[i];
+                Class<?> currentPropertyType = descriptor.getPropertyType();
                 if (propertySuperType.isAssignableFrom(descriptor.getPropertyType())) {
                     properties.add(descriptor);
                 }
             }
         }
         catch (Exception e) {
+            if(descriptor == null) {
+                LOG.error(String.format("Got exception while checking property descriptors for class %s", clazz.getName()), e);
+            } else {
+                LOG.error(String.format("Got exception while checking PropertyDescriptor.propertyType for field %s.%s", clazz.getName(), descriptor.getName()), e);
+            }
             return new PropertyDescriptor[0];
         }
         return properties.toArray(new PropertyDescriptor[properties.size()]);
@@ -410,257 +430,6 @@ public class GrailsClassUtils {
             // if there are any errors in instantiating just return null for the moment
             return null;
         }
-    }
-    /**
-     * Returns the class name without the package prefix
-     *
-     * @param targetClass The class to get a short name for
-     * @return The short name of the class
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getShortName(Class)} instead.
-     */
-    @SuppressWarnings("rawtypes")
-    @Deprecated
-    public static String getShortName(Class targetClass) {
-        return getShortName(targetClass.getName());
-    }
-
-    /**
-     * Returns the class name without the package prefix
-     *
-     * @param className The class name to get a short name for
-     * @return The short name of the class
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getShortName(String)} instead.
-     */
-    @Deprecated
-    public static String getShortName(String className) {
-        int i = className.lastIndexOf(".");
-        if (i > -1) {
-            className = className.substring(i + 1, className.length());
-        }
-        return className;
-    }
-
-    /**
-     * Returns the property name equivalent for the specified class
-     *
-     * @param targetClass The class to get the property name for
-     * @return A property name reperesentation of the class name (eg. MyClass becomes myClass)
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getPropertyNameRepresentation(Class)} instead.
-     */
-    @SuppressWarnings("rawtypes")
-    @Deprecated
-    public static String getPropertyNameRepresentation(Class targetClass) {
-        return getPropertyNameRepresentation(getShortName(targetClass));
-    }
-
-    /**
-     * Returns the property name representation of the given name
-     *
-     * @param name The name to convert
-     * @return The property name representation
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getPropertyNameRepresentation(String)} instead.
-     */
-    @Deprecated
-    public static String getPropertyNameRepresentation(String name) {
-        // Strip any package from the name.
-        int pos = name.lastIndexOf('.');
-        if (pos != -1) {
-            name = name.substring(pos + 1);
-        }
-
-        // Check whether the name begins with two upper case letters.
-        if (name.length() > 1 && Character.isUpperCase(name.charAt(0)) && Character.isUpperCase(name.charAt(1)))  {
-            return name;
-        }
-
-        String propertyName = name.substring(0,1).toLowerCase(Locale.ENGLISH) + name.substring(1);
-        if (propertyName.indexOf(' ') > -1) {
-            propertyName = propertyName.replaceAll("\\s", "");
-        }
-        return propertyName;
-    }
-
-    /**
-     * Returns the class name representation of the given name
-     *
-     * @param name The name to convert
-     * @return The property name representation
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getClassNameRepresentation(String)} instead.
-     */
-    @Deprecated
-    public static String getClassNameRepresentation(String name) {
-
-        StringBuilder buf = new StringBuilder();
-        if (name != null && name.length() > 0) {
-            String[] tokens = name.split("[^\\w\\d]");
-            for (int i = 0; i < tokens.length; i++) {
-                String token = tokens[i].trim();
-                buf.append(token.substring(0, 1).toUpperCase(Locale.ENGLISH))
-                   .append(token.substring(1));
-            }
-        }
-        return buf.toString();
-    }
-
-    /**
-     * Shorter version of getPropertyNameRepresentation
-     * @param name The name to convert
-     * @return The property name version
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getPropertyName(String)} instead.
-     */
-    @Deprecated
-    public static String getPropertyName(String name) {
-        return getPropertyNameRepresentation(name);
-    }
-
-    /**
-     * Shorter version of getPropertyNameRepresentation
-     * @param clazz The clazz to convert
-     * @return The property name version
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getPropertyName(Class)} instead.
-     */
-    @SuppressWarnings("rawtypes")
-    @Deprecated
-    public static String getPropertyName(Class clazz) {
-        return getPropertyNameRepresentation(clazz);
-    }
-
-    /**
-     * Retrieves the script name representation of the supplied class. For example
-     * MyFunkyGrailsScript would be my-funky-grails-script
-     *
-     * @param clazz The class to convert
-     * @return The script name representation
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getScriptName(Class)} instead.
-     */
-    @SuppressWarnings("rawtypes")
-    @Deprecated
-    public static String getScriptName(Class clazz) {
-        return getScriptName(clazz.getName());
-    }
-
-    /**
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getScriptName(String)} instead.
-     */
-    @Deprecated
-    public static String getScriptName(String name) {
-        if (name.endsWith(".groovy")) {
-            name = name.substring(0, name.length()-7);
-        }
-        String naturalName = getNaturalName(getShortName(name));
-        return naturalName.replaceAll("\\s", "-").toLowerCase();
-    }
-
-    /**
-     * Calculates the class name from a script name in the form
-     * my-funk-grails-script
-     *
-     * @param scriptName The script name
-     * @return A class name
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getNameFromScript(String)} instead.
-     */
-    @Deprecated
-    public static String getNameFromScript(String scriptName) {
-        return getClassNameForLowerCaseHyphenSeparatedName(scriptName);
-    }
-
-    /**
-     * Converts foo-bar into fooBar
-     *
-     * @param name The lower case hyphen separated name
-     * @return The property name equivalent
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getPropertyNameForLowerCaseHyphenSeparatedName(String)} instead.
-     */
-    @Deprecated
-    public static String getPropertyNameForLowerCaseHyphenSeparatedName(String name) {
-        return getPropertyName(getClassNameForLowerCaseHyphenSeparatedName(name));
-    }
-
-    /**
-     * Converts foo-bar into FooBar
-     *
-     * @param name The lower case hyphen separated name
-     * @return The class name equivalent
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getClassNameForLowerCaseHyphenSeparatedName(String)} instead.
-     */
-    @Deprecated
-    private static String getClassNameForLowerCaseHyphenSeparatedName(String name) {
-        if (name.indexOf('-') > -1) {
-            StringBuilder buf = new StringBuilder();
-            String[] tokens = name.split("-");
-            for (int i = 0; i < tokens.length; i++) {
-                String token = tokens[i];
-                if (token == null || token.length() == 0) continue;
-                buf.append(token.substring(0,1).toUpperCase())
-                   .append(token.substring(1));
-            }
-            return buf.toString();
-        }
-        return name.substring(0,1).toUpperCase() + name.substring(1);
-    }
-
-    /**
-     * Converts a property name into its natural language equivalent eg ('firstName' becomes 'First Name')
-     * @param name The property name to convert
-     * @return The converted property name
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getNaturalName(String)} instead.
-     */
-    @Deprecated
-    public static String getNaturalName(String name) {
-        List<String> words = new ArrayList<String>();
-        int i = 0;
-        char[] chars = name.toCharArray();
-        for (int j = 0; j < chars.length; j++) {
-            char c = chars[j];
-            String w;
-            if (i >= words.size()) {
-                w = "";
-                words.add(i, w);
-            }
-            else {
-                w = words.get(i);
-            }
-
-            if (Character.isLowerCase(c) || Character.isDigit(c)) {
-                if (Character.isLowerCase(c) && w.length() == 0) {
-                    c = Character.toUpperCase(c);
-                }
-                else if (w.length() > 1 && Character.isUpperCase(w.charAt(w.length() - 1))) {
-                    w = "";
-                    words.add(++i,w);
-                }
-
-                words.set(i, w + c);
-            }
-            else if (Character.isUpperCase(c)) {
-                if ((i == 0 && w.length() == 0) || Character.isUpperCase(w.charAt(w.length() - 1))) {
-                    words.set(i, w + c);
-                }
-                else {
-                    words.add(++i, String.valueOf(c));
-                }
-            }
-        }
-
-        StringBuilder buf = new StringBuilder();
-        for (Iterator<String> j = words.iterator(); j.hasNext();) {
-            buf.append(j.next());
-            if (j.hasNext()) {
-                buf.append(' ');
-            }
-        }
-        return buf.toString();
     }
 
     /**
@@ -940,7 +709,7 @@ public class GrailsClassUtils {
      * @return true if the method is a property getter
      */
     public static boolean isPropertyGetter(Method method) {
-        return !Modifier.isStatic(method.getModifiers()) && Modifier.isPublic(method.getModifiers()) && isGetter(method.getName(), method.getParameterTypes());
+        return !Modifier.isStatic(method.getModifiers()) && Modifier.isPublic(method.getModifiers()) && GrailsNameUtils.isGetter(method.getName(), method.getReturnType(), method.getParameterTypes());
     }
 
     /**
@@ -964,136 +733,20 @@ public class GrailsClassUtils {
     }
 
     /**
-     * Retrieves the logical class name of a Grails artifact given the Grails class
-     * and a specified trailing name
+     * Returns true if the name of the method specified and the number of arguments make it a javabean property setter.
+     * The name is assumed to be a valid Java method name, that is not verified.
      *
-     * @param clazz The class
-     * @param trailingName The trailing name such as "Controller" or "TagLib"
-     * @return The logical class name
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getLogicalName(Class, String)} instead.
-     */
-    @SuppressWarnings("rawtypes")
-    @Deprecated
-    public static String getLogicalName(Class clazz, String trailingName) {
-        return getLogicalName(clazz.getName(), trailingName);
-    }
-
-    /**
-     * Retrieves the logical name of the class without the trailing name
-     * @param name The name of the class
-     * @param trailingName The trailing name
-     * @return The logical name
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getLogicalName(String, String)} instead.
-     */
-    @Deprecated
-    public static String getLogicalName(String name, String trailingName) {
-        if (StringUtils.hasText(trailingName)) {
-            String shortName = getShortName(name);
-            if (shortName.indexOf(trailingName) > - 1) {
-                return shortName.substring(0, shortName.length() - trailingName.length());
-            }
-        }
-        return name;
-    }
-
-    /**
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getLogicalPropertyName(String, String)} instead.
-     */
-    @Deprecated
-    public static String getLogicalPropertyName(String className, String trailingName) {
-        return getLogicalName(getPropertyName(className), trailingName);
-    }
-
-    /**
-     * Retrieves the name of a setter for the specified property name
-     * @param propertyName The property name
-     * @return The setter equivalent
-     */
-    public static String getSetterName(String propertyName) {
-        return GrailsNameUtils.getSetterName(propertyName);
-    }
-
-    /**
-     * Returns true if the name of the method specified and the number of arguments make it a javabean property
-     *
-     * @param name True if its a Javabean property
+     * @param name The name of the method
      * @param args The arguments
-     * @return true if it is a javabean property method
+     * @return true if it is a javabean property setter
      */
-    public static boolean isGetter(String name, Class<?>[] args) {
-        if (!StringUtils.hasText(name) || args == null)return false;
-        if (args.length != 0)return false;
-
-        if (name.startsWith("get")) {
-            name = name.substring(3);
-            if (name.length() > 0 && Character.isUpperCase(name.charAt(0))) return true;
-        }
-        else if (name.startsWith("is")) {
-            name = name.substring(2);
-            if (name.length() > 0 && Character.isUpperCase(name.charAt(0))) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Returns a property name equivalent for the given getter name or null if it is not a getter
-     *
-     * @param getterName The getter name
-     * @return The property name equivalent
-     */
-    public static String getPropertyForGetter(String getterName) {
-        if (!StringUtils.hasText(getterName))return null;
-
-        if (getterName.startsWith("get")) {
-            String prop = getterName.substring(3);
-            return convertPropertyName(prop);
-        }
-        if (getterName.startsWith("is")) {
-            String prop = getterName.substring(2);
-            return convertPropertyName(prop);
-        }
-        return null;
-    }
-
-    private static String convertPropertyName(String prop) {
-        if (prop.length() == 1) {
-            return prop.toLowerCase();
-        }
-        if (Character.isUpperCase(prop.charAt(0)) && Character.isUpperCase(prop.charAt(1))) {
-            return prop;
-        }
-        if (Character.isDigit(prop.charAt(0))) {
-            return prop;
-        }
-        return Character.toLowerCase(prop.charAt(0)) + prop.substring(1);
-    }
-
-    /**
-     * Returns a property name equivalent for the given setter name or null if it is not a getter
-     *
-     * @param setterName The setter name
-     * @return The property name equivalent
-     */
-    public static String getPropertyForSetter(String setterName) {
-        if (!StringUtils.hasText(setterName))return null;
-
-        if (setterName.startsWith("set")) {
-            String prop = setterName.substring(3);
-            return convertPropertyName(prop);
-        }
-        return null;
-    }
-
     @SuppressWarnings("rawtypes")
     public static boolean isSetter(String name, Class[] args) {
         if (!StringUtils.hasText(name) || args == null)return false;
 
         if (name.startsWith("set")) {
             if (args.length != 1) return false;
-            name = name.substring(3);
-            if (name.length() > 0 && Character.isUpperCase(name.charAt(0))) return true;
+            return GrailsNameUtils.isPropertyMethodSuffix(name.substring(3));
         }
 
         return false;
@@ -1184,35 +837,6 @@ public class GrailsClassUtils {
     }
 
     /**
-     * Returns the class name for the given logical name and trailing name. For example "person" and "Controller" would evaluate to "PersonController"
-     *
-     * @param logicalName The logical name
-     * @param trailingName The trailing name
-     * @return The class name
-     *
-     * @deprecated Use {@link grails.util.GrailsNameUtils#getClassName(String, String)} instead.
-     */
-    @Deprecated
-    public static String getClassName(String logicalName, String trailingName) {
-        Assert.isTrue(StringUtils.hasText(logicalName), "Argument [logicalName] cannot be null or blank");
-
-        String className = logicalName.substring(0,1).toUpperCase() + logicalName.substring(1);
-        if (trailingName != null) className = className + trailingName;
-        return className;
-    }
-
-    /**
-     * Checks whether the given class is a JDK 1.5 enum.
-     *
-     * @param type The class to check
-     * @return true if it is an enum
-     * @deprecated
-     */
-    public static boolean isJdk5Enum(Class<?> type) {
-        return type.isEnum();
-    }
-
-    /**
      * Locates the name of a property for the given value on the target object using Groovy's meta APIs.
      * Note that this method uses the reference so the incorrect result could be returned for two properties
      * that refer to the same reference. Use with caution.
@@ -1233,6 +857,88 @@ public class GrailsClassUtils {
             }
         }
         return null;
+    }
+
+    /**
+     * Retrieves the name of a setter for the specified property name
+     * @param propertyName The property name
+     * @return The setter equivalent
+     */
+    public static String getSetterName(String propertyName) {
+        return GrailsNameUtils.getSetterName(propertyName);
+    }
+
+    /**
+     * Returns true if the name of the method specified and the number of arguments make it a javabean property getter.
+     * The name is assumed to be a valid Java method name, that is not verified.
+     *
+     * @param name The name of the method
+     * @param args The arguments
+     * @return true if it is a javabean property getter
+     * @deprecated use {@link #isGetter(String, Class, Class[])} instead because this method has a defect for "is.." method with Boolean return types.
+     */
+    public static boolean isGetter(String name, Class<?>[] args) {
+        return GrailsNameUtils.isGetter(name, boolean.class, args);
+    }
+
+    /**
+     * Returns true if the name of the method specified and the number of arguments make it a javabean property getter.
+     * The name is assumed to be a valid Java method name, that is not verified.
+     *
+     * @param name The name of the method
+     * @param returnType The return type of the method
+     * @param args The arguments
+     * @return true if it is a javabean property getter
+     */
+    public static boolean isGetter(String name, Class returnType, Class<?>[] args) {
+        return GrailsNameUtils.isGetter(name, returnType, args);
+    }
+
+    /**
+     * Returns a property name equivalent for the given getter name or null if it is not a valid getter. If not null
+     * or empty the getter name is assumed to be a valid identifier.
+     *
+     * @param getterName The getter name
+     * @return The property name equivalent
+     * @deprecated Use {@link #getPropertyForGetter(String, Class)} instead because this method has a defect for "is.." method with Boolean return types.
+     */
+    public static String getPropertyForGetter(String getterName) {
+        return GrailsNameUtils.getPropertyForGetter(getterName);
+    }
+
+    /**
+     * Returns a property name equivalent for the given getter name and return type or null if it is not a valid getter. If not null
+     * or empty the getter name is assumed to be a valid identifier.
+     *
+     * @param getterName The getter name
+     * @param returnType The type the method returns
+     * @return The property name equivalent
+     */
+    public static String getPropertyForGetter(String getterName, Class returnType) {
+        return GrailsNameUtils.getPropertyForGetter(getterName, returnType);
+    }
+
+    /**
+     * Returns a property name equivalent for the given getter name and return type or null if it is not a valid getter. If not null
+     * or empty the getter name is assumed to be a valid identifier.
+     *
+     * @param getterName The getter name
+     * @param returnType The class name the method returns
+     * @return The property name equivalent
+     */
+    public static String getPropertyForGetter(String getterName, String returnType) {
+        return GrailsNameUtils.getPropertyForGetter(getterName, returnType);
+    }
+
+    /**
+     * Returns a property name equivalent for the given setter name or null if it is not a valid setter. If not null
+     * or empty the setter name is assumed to be a valid identifier.
+     *
+     * @param setterName The setter name, must be null or empty or a valid identifier name
+     * @return The property name equivalent
+     */
+    public static String getPropertyForSetter(String setterName) {
+        return GrailsNameUtils.getPropertyForSetter(setterName);
     }
 
     /**

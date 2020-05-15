@@ -18,9 +18,11 @@ import org.grails.datastore.mapping.keyvalue.mapping.config.KeyValueMappingConte
 import org.grails.datastore.mapping.model.MappingContext
 import org.grails.plugins.web.mime.MimeTypesFactoryBean
 import org.grails.plugins.web.rest.render.ServletRenderContext
+import org.grails.support.MockApplicationContext
 import org.grails.web.mapping.DefaultLinkGenerator
 import org.grails.web.mapping.DefaultUrlMappingEvaluator
 import org.grails.web.mapping.DefaultUrlMappingsHolder
+import org.grails.web.mime.DefaultMimeUtility
 import org.grails.web.servlet.mvc.GrailsWebRequest
 import org.springframework.context.support.StaticMessageSource
 import org.springframework.core.env.MapPropertySource
@@ -65,7 +67,7 @@ class HalDomainClassJsonRendererSpec extends Specification {
 
         then:"The resulting HAL is correct"
             response.contentType == GrailsWebUtil.getContentType(HalJsonRenderer.MIME_TYPE.name, GrailsWebUtil.DEFAULT_ENCODING)
-            response.contentAsString == '{"_links":{"self":{"href":"http://localhost/books/1","hreflang":"en","type":"application/hal+json"},"The Publisher":{"href":"/publisher","hreflang":"en"},"author":{"href":"http://localhost/authors/2","hreflang":"en"}},"title":"The Stand","_embedded":{"author":{"_links":{"self":{"href":"http://localhost/authors/2","hreflang":"en"}},"name":"Stephen King"},"authors":[{"_links":{"self":{"href":"http://localhost/authors/2","hreflang":"en"}},"name":"Stephen King"},{"_links":{"self":{"href":"http://localhost/authors/3","hreflang":"en"}},"name":"King Stephen"}]}}'
+            response.contentAsString == '{"_links":{"self":{"href":"http://localhost/books/1","hreflang":"en","type":"application/hal+json"},"The Publisher":{"href":"/publisher","hreflang":"en"},"author":{"href":"http://localhost/authors/2","hreflang":"en"}},"title":"The Stand","_embedded":{"authors":[{"_links":{"self":{"href":"http://localhost/authors/2","hreflang":"en"}},"name":"Stephen King"},{"_links":{"self":{"href":"http://localhost/authors/3","hreflang":"en"}},"name":"King Stephen"}],"author":{"_links":{"self":{"href":"http://localhost/authors/2","hreflang":"en"}},"name":"Stephen King"}}}'
 
 
     }
@@ -145,7 +147,9 @@ class HalDomainClassJsonRendererSpec extends Specification {
         return generator;
     }
     UrlMappingsHolder getUrlMappingsHolder(Closure mappings) {
-        def evaluator = new DefaultUrlMappingEvaluator(new MockServletContext())
+        def ctx = new MockApplicationContext()
+        ctx.registerMockBean(GrailsApplication.APPLICATION_ID, new DefaultGrailsApplication())
+        def evaluator = new DefaultUrlMappingEvaluator(ctx)
         def allMappings = evaluator.evaluateMappings mappings
         return new DefaultUrlMappingsHolder(allMappings)
     }
@@ -156,7 +160,7 @@ class HalDomainClassJsonRendererSpec extends Specification {
         servletContext.setAttribute(WebApplicationContext.ROOT_WEB_APPLICATION_CONTEXT_ATTRIBUTE, ctx)
         def application = new DefaultGrailsApplication()
         application.config = testConfig
-        ctx.beanFactory.registerSingleton(MimeType.BEAN_NAME, buildMimeTypes(application))
+        ctx.beanFactory.registerSingleton(MimeType.BEAN_NAME, new DefaultMimeUtility(buildMimeTypes(application)))
 
         ctx.beanFactory.registerSingleton(GrailsApplication.APPLICATION_ID, application)
         ctx.refresh()

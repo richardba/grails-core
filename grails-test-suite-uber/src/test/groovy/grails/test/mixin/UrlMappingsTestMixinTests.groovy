@@ -2,47 +2,17 @@ package grails.test.mixin
 
 import grails.artefact.Artefact
 import grails.rest.RestfulController
-import grails.test.mixin.web.UrlMappingsUnitTestMixin
-import grails.web.Action
-import junit.framework.AssertionFailedError
+import grails.testing.web.GrailsWebUnitTest
+import grails.testing.web.UrlMappingsUnitTest
 import junit.framework.ComparisonFailure
-
-import org.junit.Test
 import org.springframework.web.context.WebApplicationContext
 import spock.lang.Issue
+import spock.lang.Specification
 
 /**
  * Tests for the UrlMappingsTestMixin class
  */
-@TestMixin(UrlMappingsUnitTestMixin)
-class UrlMappingsTestMixinTests {
-
-    @Test
-    void testGRAILS5222() {
-        mockController(UserController)
-        mockUrlMappings(GRAILS5222UrlMappings)
-
-        shouldFail(ComparisonFailure) {
-            assertForwardUrlMapping("/user", controller: "user", action: "publicProfile") {
-                idText = "1234"
-            }
-        }
-    }
-
-    @Test
-    void testMapUri() {
-        mockController(GrailsUrlMappingsTestCaseFakeController)
-        mockUrlMappings(MyUrlMappings)
-
-        def controller = mapURI('/action1')
-
-        assert controller != null
-        assert controller instanceof  GrailsUrlMappingsTestCaseFakeController
-
-        controller = mapURI('/rubbish')
-
-        assert controller == null
-    }
+class UrlMappingsTestMixinTests extends Specification implements GrailsWebUnitTest {
 
 //    @Test
 //    void testMultipeUrlMappings() {
@@ -128,27 +98,135 @@ class UrlMappingsTestMixinTests {
 //        }
 //    }
 
-    @Test
-    void testGrails5222Again() {
-        mockController(GrailsUrlMappingsTestCaseFakeController)
-        mockUrlMappings(AnotherUrlMappings)
-        shouldFail(ComparisonFailure) {
-            assertForwardUrlMapping("/alias/param1value", controller: "grailsUrlMappingsTestCaseFake", action: "action1") {
-                param1 = "invalidparam1value"
-            }
-        }
+}
+
+class AnotherUrlMappings {
+    static mappings = {
+        "/$controller/$action?/$id?" {}
+        "/alias/$param1/"(controller: "grailsUrlMappingsTestCaseFake", action: "action1")
+    }
+}
+
+class AnotherUrlMappingsSpec extends Specification implements UrlMappingsUnitTest<AnotherUrlMappings> {
+
+    Class[] getControllersToMock() {
+        [GrailsUrlMappingsTestCaseFakeController]
     }
 
-    @Test
-    void testGrails9110() {
-        mockController(UserController)
-        mockUrlMappings(GRAILS9110UrlMappings)
-        shouldFail(ComparisonFailure) {
-            assertForwardUrlMapping("/user", controller:"user", action:"publicProfile") {
-                param1 = "true"
-            }
+    void testGrails5222Again() {
+        when:
+        assertForwardUrlMapping("/alias/param1value", controller: "grailsUrlMappingsTestCaseFake", action: "action1") {
+            param1 = "invalidparam1value"
         }
-        assertForwardUrlMapping("/user", controller:"user", action:"publicProfile") {
+
+        then:
+        thrown(ComparisonFailure)
+    }
+}
+
+@Artefact("Controller")
+class GrailsUrlMappingsTestCaseFakeController {
+   static defaultAction = 'action1'
+   def action1(){}
+   def action2(){}
+   def action3(){}
+}
+
+@Artefact("Controller")
+class UserController {
+    def publicProfile() {}
+    def update() {}
+    def show() {}
+    def list() {}
+}
+
+class MyUrlMappings {
+    static mappings = { applicationContext ->
+        assert applicationContext != null
+        assert applicationContext instanceof WebApplicationContext
+        "/action1"(controller: "grailsUrlMappingsTestCaseFake", action: "action1")
+        "/action2"(controller: "grailsUrlMappingsTestCaseFake", action: "action2")
+        "/default"(controller: "grailsUrlMappingsTestCaseFake")
+        "500"(controller: "grailsUrlMappingsTestCaseFake", action: "action1")
+        "/controllerView"(controller: "grailsUrlMappingsTestCaseFake", view: "view")
+        "/absoluteView"(view: "view")
+        "/absoluteViewWithSlash"(view: "/view")
+        "/params/$param1/$param2?"(controller: "grailsUrlMappingsTestCaseFake", action: "action3")
+    }
+}
+
+class MyUrlMappingsSpec extends Specification implements UrlMappingsUnitTest<MyUrlMappings> {
+
+    Class[] getControllersToMock() {
+        [GrailsUrlMappingsTestCaseFakeController]
+    }
+
+    void testMapUri() {
+        when:
+        def controller = mapURI('/action1')
+
+        then:
+        controller != null
+        controller instanceof GrailsUrlMappingsTestCaseFakeController
+
+        when:
+        controller = mapURI('/rubbish')
+
+        then:
+        controller == null
+    }
+}
+
+class GRAILS5222UrlMappings {
+    static mappings = {
+        "/user/$idText?"{
+            controller = "user"
+            action = "publicProfile"
+        }
+    }
+}
+
+class GRAILS5222UrlMappingsSpec extends Specification implements UrlMappingsUnitTest<GRAILS5222UrlMappings> {
+
+    Class[] getControllersToMock() {
+        [UserController]
+    }
+
+    void testGRAILS5222() {
+        when:
+        assertForwardUrlMapping("/user", controller: "user", action: "publicProfile") {
+            idText = "1234"
+        }
+
+        then:
+        thrown(ComparisonFailure)
+    }
+}
+
+class GRAILS9863UrlMappings {
+    static mappings = {
+        "/p/user" (controller:"user", action:"index", plugin:"sample")
+        "/n/user" (controller:"user", action:"index", namespace:"sample")
+    }
+}
+
+class GRAILS9863UrlMappingsSpec extends Specification implements UrlMappingsUnitTest<GRAILS9863UrlMappings> {
+
+    @Issue("https://github.com/grails/grails-core/issues/9863")
+    void testGRAILS9863() {
+        when:
+        assertReverseUrlMapping("/p/user", controller:"user", action:"index", plugin:"sample")
+        assertReverseUrlMapping("/n/user", controller:"user", action:"index", namespace: "sample")
+        assertReverseUrlMapping("/user/index", controller:"user", action:"index")
+
+        then:
+        noExceptionThrown()
+    }
+}
+
+class GRAILS9110UrlMappings {
+    static mappings = {
+        "/user"(controller:"user", action:"publicProfile") {
             boolParam = true
             strParam = "string"
             numParam = 123
@@ -156,13 +234,87 @@ class UrlMappingsTestMixinTests {
             dateParam = new Date(1)
         }
     }
+}
 
-    @Test
+class GRAILS9110UrlMappingsSpec extends Specification implements UrlMappingsUnitTest<GRAILS9110UrlMappings> {
+
+    Class[] getControllersToMock() {
+        [UserController]
+    }
+
+    void testGrails9110() {
+        when:
+        assertForwardUrlMapping("/user", controller:"user", action:"publicProfile") {
+            param1 = "true"
+        }
+
+        then:
+        thrown(ComparisonFailure)
+
+        when:
+        assertForwardUrlMapping("/user", controller:"user", action:"publicProfile") {
+            boolParam = true
+            strParam = "string"
+            numParam = 123
+            objParam = [test:true]
+            dateParam = new Date(1)
+        }
+
+        then:
+        noExceptionThrown()
+    }
+}
+
+class MethodTestUrlMappings {
+    static mappings = {
+        "/users/$name"(controller: 'user', action: 'update', method: 'put')
+        "/users/$name"(controller: 'user', action: 'show', method: 'get')
+        "/users"(controller: 'user', action: 'list', method: 'get')
+    }
+}
+
+class MethodTestUrlMappingsSpec extends Specification implements UrlMappingsUnitTest<MethodTestUrlMappings> {
+
+    Class[] getControllersToMock() {
+        [UserController]
+    }
+
+    void testMethodMappings() {
+        when:
+        request.method = 'GET'
+        assertUrlMapping('/users/timmy', controller: 'user', action: 'show', method: 'get') { name = 'timmy' }
+        assertUrlMapping('/users', controller: 'user', action: 'list', method: 'get')
+
+        request.method = 'PUT'
+        assertUrlMapping('/users/timmy', controller: 'user', action: 'update', method: 'put') { name = 'timmy' }
+
+        then:
+        noExceptionThrown()
+    }
+}
+
+@Artefact("Controller")
+class PersonController extends RestfulController<String> {
+    PersonController() {
+        super(''.class)
+    }
+}
+
+class ResourceTestUrlMappings {
+    static mappings = {
+        '/person'(resources: 'person')
+    }
+}
+
+class ResourceTestUrlMappingsSpec extends Specification implements UrlMappingsUnitTest<ResourceTestUrlMappings> {
+
+    Class[] getControllersToMock() {
+        [PersonController]
+    }
+
     @Issue('https://github.com/grails/grails-core/issues/9065')
     void testResourcesUrlMapping() {
-        mockController(PersonController)
-        mockUrlMappings(ResourceTestUrlMappings)
-
+        when:
         request.method = 'GET'
         assertForwardUrlMapping('/person', controller: 'person', action: 'index')
         assertForwardUrlMapping('/person/create', controller: 'person', action: 'create')
@@ -191,74 +343,40 @@ class UrlMappingsTestMixinTests {
             id = 'personId'
         }
 
-    }
-}
-
-class AnotherUrlMappings {
-    static mappings = {
-        "/$controller/$action?/$id?" {}
-        "/alias/$param1/"(controller: "grailsUrlMappingsTestCaseFake", action: "action1")
+        then:
+        noExceptionThrown()
     }
 }
 
 @Artefact("Controller")
-class GrailsUrlMappingsTestCaseFakeController {
-   static defaultAction = 'action1'
-   def action1(){}
-   def action2(){}
-   def action3(){}
+class ExceptionTestErrorsController {
+    def handleNullPointer() {}
+    def handleIllegalArgument() {}
+    def handleDefault() {}
 }
 
-@Artefact("Controller")
-class UserController {
-    def publicProfile() {}
-}
-
-class MyUrlMappings {
-    static mappings = { applicationContext ->
-        assert applicationContext != null
-        assert applicationContext instanceof WebApplicationContext
-        "/action1"(controller: "grailsUrlMappingsTestCaseFake", action: "action1")
-        "/action2"(controller: "grailsUrlMappingsTestCaseFake", action: "action2")
-        "/default"(controller: "grailsUrlMappingsTestCaseFake")
-        "500"(controller: "grailsUrlMappingsTestCaseFake", action: "action1")
-        "/controllerView"(controller: "grailsUrlMappingsTestCaseFake", view: "view")
-        "/absoluteView"(view: "view")
-        "/absoluteViewWithSlash"(view: "/view")
-        "/params/$param1/$param2?"(controller: "grailsUrlMappingsTestCaseFake", action: "action3")
-    }
-}
-
-class GRAILS5222UrlMappings {
+class ExceptionTestUrlMappings {
     static mappings = {
-        "/user/$idText?"{
-            controller = "user"
-            action = "publicProfile"
-        }
+        '500'(controller: 'exceptionTestErrors', action: 'handleNullPointer', exception: NullPointerException)
+        '500'(controller: 'exceptionTestErrors', action: 'handleIllegalArgument', exception: IllegalArgumentException)
+        '500'(controller: 'exceptionTestErrors', action: 'handleDefault')
     }
 }
 
-class GRAILS9110UrlMappings {
-    static mappings = {
-        "/user"(controller:"user", action:"publicProfile") {
-            boolParam = true
-            strParam = "string"
-            numParam = 123
-            objParam = [test:true]
-            dateParam = new Date(1)
-        }
-    }
-}
+class ExceptionTestUrlMappingsSpec extends Specification implements UrlMappingsUnitTest<ExceptionTestUrlMappings> {
 
-@Artefact("Controller")
-class PersonController extends RestfulController<String> {
-    PersonController() {
-        super(''.class)
+    Class[] getControllersToMock() {
+        [ExceptionTestErrorsController]
     }
-}
 
-class ResourceTestUrlMappings {
-    static mappings = {
-        '/person'(resources: 'person')
+    @Issue('https://github.com/grails/grails-core/issues/10226')
+    void testExceptionUrlMapping() {
+        when:
+        assertForwardUrlMapping(500, controller: 'exceptionTestErrors', action: 'handleNullPointer', exception: new NullPointerException())
+        assertForwardUrlMapping(500, controller: 'exceptionTestErrors', action: 'handleIllegalArgument', exception: new IllegalArgumentException())
+        assertForwardUrlMapping(500, controller: 'exceptionTestErrors', action: 'handleDefault')
+
+        then:
+        noExceptionThrown()
     }
 }

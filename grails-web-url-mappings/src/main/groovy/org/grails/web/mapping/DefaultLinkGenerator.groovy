@@ -22,7 +22,9 @@ import grails.web.mapping.LinkGenerator
 import grails.web.mapping.UrlCreator
 import grails.web.mapping.UrlMapping
 import grails.web.mapping.UrlMappingsHolder
+import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.util.StringUtils
 
 import javax.annotation.PostConstruct
 import java.util.regex.Pattern
@@ -54,7 +56,8 @@ import org.springframework.http.HttpMethod
  * @since 2.0
  */
 @CompileStatic
-class DefaultLinkGenerator implements LinkGenerator, org.codehaus.groovy.grails.web.mapping.LinkGenerator, PluginManagerAware {
+@Slf4j
+class DefaultLinkGenerator implements LinkGenerator, PluginManagerAware {
 
     private static final Pattern absoluteUrlPattern = Pattern.compile('^[A-Za-z][A-Za-z0-9+\\-.]*:.*$')
 
@@ -176,6 +179,8 @@ class DefaultLinkGenerator implements LinkGenerator, org.codehaus.groovy.grails.
                         } else if (DomainClassArtefactHandler.isDomainClass(resourceAttribute.getClass(), true)) {
                             resource = GrailsNameUtils.getPropertyName(resourceAttribute.getClass())
                             hasId = true
+                        } else if (resourceAttribute instanceof Class) {
+                            resource = GrailsNameUtils.getPropertyName(resourceAttribute)
                         } else {
                             resource = resourceAttribute.toString()
                         }
@@ -244,18 +249,23 @@ class DefaultLinkGenerator implements LinkGenerator, org.codehaus.groovy.grails.
                 }
                 def pluginName = attrs.get(UrlMapping.PLUGIN)?.toString()
                 def namespace = attrs.get(UrlMapping.NAMESPACE)?.toString()
+                if (namespace == null) {
+                    if (controller == requestStateLookupStrategy.controllerName) {
+                        namespace = requestStateLookupStrategy.controllerNamespace
+                    }
+                }
                 UrlCreator mapping = urlMappingsHolder.getReverseMappingNoDefault(controller,action,namespace,pluginName,httpMethod,params)
                 if (mapping == null && isDefaultAction) {
                     mapping = urlMappingsHolder.getReverseMappingNoDefault(controller,null,namespace,pluginName,httpMethod,params)
                 }
                 if (mapping == null) {
-                    mapping = urlMappingsHolder.getReverseMapping(controller,action,pluginName,httpMethod,params)
+                    mapping = urlMappingsHolder.getReverseMapping(controller,action,namespace,pluginName,httpMethod,params)
                 }
 
                 boolean absolute = isAbsolute(attrs)
 
                 if (!absolute) {
-                    url = mapping.createRelativeURL(convertedControllerName, convertedActionName, params, encoding, frag)
+                    url = mapping.createRelativeURL(convertedControllerName, convertedActionName, namespace, pluginName, params, encoding, frag)
                     final contextPathAttribute = attrs.get(ATTRIBUTE_CONTEXT_PATH)
                     final cp = contextPathAttribute == null ? getContextPath() : contextPathAttribute
                     if (attrs.get(ATTRIBUTE_BASE) || cp == null) {
@@ -268,7 +278,7 @@ class DefaultLinkGenerator implements LinkGenerator, org.codehaus.groovy.grails.
                     writer.append url
                 }
                 else {
-                    url = mapping.createRelativeURL(convertedControllerName, convertedActionName, params, encoding, frag)
+                    url = mapping.createRelativeURL(convertedControllerName, convertedActionName, namespace, pluginName, params, encoding, frag)
                     writer.append handleAbsolute(attrs)
                     writer.append url
                 }
@@ -405,6 +415,7 @@ class DefaultLinkGenerator implements LinkGenerator, org.codehaus.groovy.grails.
                 u = "http://localhost:${System.getProperty('server.port') ?: '8080'}${contextPath ?: '' }"
             }
         }
+        log.trace("Resolved base server URL: $u")
         return u
     }
 

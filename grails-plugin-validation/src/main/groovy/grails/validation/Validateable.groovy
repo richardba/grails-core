@@ -16,12 +16,16 @@
 package grails.validation
 
 import grails.util.Holders
+import groovy.transform.CompileDynamic
 import groovy.transform.CompileStatic
 import org.grails.datastore.gorm.support.BeforeValidateHelper
-import org.grails.validation.DefaultConstraintEvaluator
-import org.springframework.beans.factory.BeanFactory
+import org.grails.datastore.gorm.validation.constraints.eval.DefaultConstraintEvaluator
+import org.grails.datastore.gorm.validation.constraints.registry.DefaultConstraintRegistry
+import org.grails.datastore.mapping.keyvalue.mapping.config.KeyValueMappingContext
+import org.grails.validation.ConstraintEvalUtils
 import org.springframework.context.ApplicationContext
 import org.springframework.context.MessageSource
+import org.springframework.context.support.StaticMessageSource
 import org.springframework.validation.Errors
 import org.springframework.validation.FieldError
 
@@ -33,87 +37,130 @@ import org.springframework.validation.FieldError
  * @author Jeff Brown
  * @author Graeme Rocher
  */
+@CompileStatic
 trait Validateable {
     private BeforeValidateHelper beforeValidateHelper = new BeforeValidateHelper()
-    private static Map<String, ConstrainedProperty> constraintsMapInternal
+    private static Map<String, Constrained> constraintsMapInternal
     Errors errors
 
+    /**
+     * @return The errors
+     */
     Errors getErrors() {
         initErrors()
         errors
     }
 
+    /**
+     * @return Whether the object has errors
+     */
     Boolean hasErrors() {
         initErrors()
         errors.hasErrors()
     }
 
+    /**
+     * Clear the errors
+     */
     void clearErrors() {
         errors = null
     }
 
-    private void initErrors() {
-        if (errors == null) {
-            errors = new ValidationErrors(this, this.getClass().getName())
-        }
-    }
-
-    static Map<String, ConstrainedProperty> getConstraintsMap() {
+    /**
+     * @return The map of applied constraints
+     */
+    static Map<String, Constrained> getConstraintsMap() {
         if (constraintsMapInternal == null) {
-            ConstraintsEvaluator evaluator = findConstraintsEvaluator()
-            def evaluatedConstraints = evaluator.evaluate(this, defaultNullable())
-            constraintsMapInternal = evaluatedConstraints
+            org.grails.datastore.gorm.validation.constraints.eval.ConstraintsEvaluator evaluator = findConstraintsEvaluator()
+            Map<String, grails.gorm.validation.ConstrainedProperty> evaluatedConstraints = evaluator.evaluate(this, defaultNullable())
+
+            Map<String, Constrained> finalConstraints = [:]
+            for(entry in evaluatedConstraints) {
+                finalConstraints.put(entry.key, new ConstrainedDelegate(entry.value))
+            }
+
+            constraintsMapInternal = finalConstraints
         }
-        constraintsMapInternal
+        return constraintsMapInternal
     }
 
-    @CompileStatic
-    private static ConstraintsEvaluator findConstraintsEvaluator() {
-        try {
-            BeanFactory ctx = Holders.applicationContext
-            ConstraintsEvaluator evaluator = ctx.getBean(ConstraintsEvaluator.BEAN_NAME, ConstraintsEvaluator)
-            return evaluator
-        } catch (Throwable e) {
-            return new DefaultConstraintEvaluator()
-        }
-    }
-
+    /**
+     * Validate the object
+     *
+     * @return True if it is valid
+     */
     boolean validate() {
         validate null, null, null
     }
 
+    /**
+     * Validate the object with the given adhoc constraints
+     *
+     * @return True if it is valid
+     */
     boolean validate(Closure<?>... adHocConstraintsClosures) {
         validate(null, null, adHocConstraintsClosures)
     }
 
+    /**
+     * Validate the object with the given parameters
+     *
+     * @return True if it is valid
+     */
     boolean validate(Map<String, Object> params) {
         validate params, null
     }
 
+    /**
+     * Validate the object with the given parameters and adhoc constraints
+     *
+     * @return True if it is valid
+     */
     boolean validate(Map<String, Object> params, Closure<?>... adHocConstraintsClosures) {
         validate(null, params, adHocConstraintsClosures)
     }
 
+    /**
+     * Validate the object for the given list of fields
+     *
+     * @return True if it is valid
+     */
     boolean validate(List fieldsToValidate) {
         validate fieldsToValidate, null, null
     }
 
+    /**
+     * Validate the object for the given list of fields and adhoc constraints
+     *
+     * @return True if it is valid
+     */
     boolean validate(List fieldsToValidate, Closure<?>... adHocConstraintsClosures) {
         validate(fieldsToValidate, null, adHocConstraintsClosures)
     }
 
+    /**
+     * Validate the object for the given list of fields and parameters
+     *
+     * @return True if it is valid
+     */
     boolean validate(List fieldsToValidate, Map<String, Object> params) {
         validate fieldsToValidate, params, null
     }
 
+    /**
+     * Validate the object for the given list of fields, parameters and adhoc constraints
+     *
+     * @return True if it is valid
+     */
     boolean validate(List fieldsToValidate, Map<String, Object> params, Closure<?>... adHocConstraintsClosures) {
         beforeValidateHelper.invokeBeforeValidate(this, fieldsToValidate)
 
         boolean shouldInherit = Boolean.valueOf(params?.inherit?.toString() ?: 'true')
-        ConstraintsEvaluator evaluator = findConstraintsEvaluator()
-        Map<String, ConstrainedProperty> constraints = evaluator.evaluate(this.class, defaultNullable(), !shouldInherit, adHocConstraintsClosures)
+        org.grails.datastore.gorm.validation.constraints.eval.ConstraintsEvaluator evaluator = findConstraintsEvaluator()
 
-        def localErrors = doValidate(constraints, fieldsToValidate)
+        Map<String, grails.gorm.validation.ConstrainedProperty> constraints = evaluator.evaluate(this.class, defaultNullable(), !shouldInherit, adHocConstraintsClosures)
+
+        ValidationErrors localErrors = doValidate(constraints, fieldsToValidate)
 
         boolean clearErrors = Boolean.valueOf(params?.clearErrors?.toString() ?: 'true')
         if (errors && !clearErrors) {
@@ -124,14 +171,13 @@ trait Validateable {
         return !errors.hasErrors()
     }
 
-    private ValidationErrors doValidate(Map<String, ConstrainedProperty> constraints, List fieldsToValidate) {
-        def localErrors = new ValidationErrors(this, this.class.name)
+    private ValidationErrors doValidate(Map<String, grails.gorm.validation.ConstrainedProperty> constraints, List fieldsToValidate) {
+        ValidationErrors localErrors = new ValidationErrors(this, this.class.name)
         if (constraints) {
-            Object messageSource = findMessageSource()
-            def originalErrors = getErrors()
+            Errors originalErrors = getErrors()
             for (originalError in originalErrors.allErrors) {
                 if (originalError instanceof FieldError) {
-                    if (originalErrors.getFieldError(originalError.field)?.bindingFailure) {
+                    if (originalErrors.getFieldError(((FieldError)originalError).field)?.bindingFailure) {
                         localErrors.addError originalError
                     }
                 } else {
@@ -140,10 +186,8 @@ trait Validateable {
             }
             for (prop in constraints.values()) {
                 if (fieldsToValidate == null || fieldsToValidate.contains(prop.propertyName)) {
-                    def fieldError = originalErrors.getFieldError(prop.propertyName)
+                    FieldError fieldError = originalErrors.getFieldError(prop.propertyName)
                     if (fieldError == null || !fieldError.bindingFailure) {
-                        prop.messageSource = messageSource
-
                         def value = getPropertyValue(prop)
                         prop.validate(this, value, localErrors)
                     }
@@ -153,17 +197,42 @@ trait Validateable {
         localErrors
     }
 
-    private Object getPropertyValue(ConstrainedProperty prop) {
+    @CompileDynamic
+    private Object getPropertyValue(grails.gorm.validation.ConstrainedProperty prop) {
         this.getProperty(prop.propertyName)
+    }
+
+    @CompileStatic
+    private static org.grails.datastore.gorm.validation.constraints.eval.ConstraintsEvaluator findConstraintsEvaluator() {
+        try {
+            ApplicationContext ctx = Holders.applicationContext
+            org.grails.datastore.gorm.validation.constraints.eval.ConstraintsEvaluator evaluator = ctx.getBean(org.grails.datastore.gorm.validation.constraints.eval.ConstraintsEvaluator)
+            return evaluator
+        } catch (Throwable e) {
+            MessageSource messageSource = Holders.findApplicationContext() ?: new StaticMessageSource()
+            Map<String, Object> defaultConstraints = Holders.findApplication() ?
+                    ConstraintEvalUtils.getDefaultConstraints(Holders.grailsApplication.config) : Collections.<String, Object>emptyMap()
+            return new DefaultConstraintEvaluator(
+                    new DefaultConstraintRegistry(messageSource),
+                    new KeyValueMappingContext(""),
+                    defaultConstraints
+            )
+        }
     }
 
     private MessageSource findMessageSource() {
         try {
-            ApplicationContext ctx = Holders.applicationContext
+            ApplicationContext ctx = Holders.findApplicationContext()
             MessageSource messageSource = ctx?.containsBean('messageSource') ? ctx.getBean('messageSource', MessageSource) : null
             return messageSource
         } catch (Throwable e) {
             return null
+        }
+    }
+
+    private void initErrors() {
+        if (errors == null) {
+            errors = new ValidationErrors(this, this.getClass().getName())
         }
     }
 

@@ -39,13 +39,23 @@ import org.springframework.web.context.request.RequestContextHolder;
  * @author Graeme Rocher
  */
 @SuppressWarnings({"unchecked","rawtypes"})
-public class GrailsFlashScope implements FlashScope, org.codehaus.groovy.grails.web.servlet.FlashScope {
+public class GrailsFlashScope implements FlashScope {
 
     private static final long serialVersionUID = 1457772347769500476L;
     private Map current = new ConcurrentHashMap();
     private Map next = new ConcurrentHashMap();
     public static final String ERRORS_PREFIX = "org.codehaus.groovy.grails.ERRORS_";
     private static final String ERRORS_PROPERTY = "errors";
+
+    private final boolean registerWithSession;
+
+    public GrailsFlashScope() {
+        this(true);
+    }
+
+    public GrailsFlashScope(boolean registerWithSession) {
+        this.registerWithSession = registerWithSession;
+    }
 
     public void next() {
         current.clear();
@@ -108,27 +118,27 @@ public class GrailsFlashScope implements FlashScope, org.codehaus.groovy.grails.
         return (current.containsValue(value) || next.containsValue(value));
     }
 
-    public Collection values() {
+    public Collection<Object> values() {
         Collection c = new ArrayList();
         c.addAll(current.values());
         c.addAll(next.values());
         return c;
     }
 
-    public void putAll(Map t) {
-        for (Map.Entry<Object, Object> entry : ((Map<Object,Object>)t).entrySet()) {
+    public void putAll(Map<? extends String, ? extends Object> t) {
+        for (Entry<? extends String, ? extends Object> entry : t.entrySet()) {
             put(entry.getKey(), entry.getValue());
         }
     }
 
-    public Set entrySet() {
+    public Set<Map.Entry<String, Object>> entrySet() {
         Set entrySet = new HashSet();
         entrySet.addAll(current.entrySet());
         entrySet.addAll(next.entrySet());
         return entrySet;
     }
 
-    public Set keySet() {
+    public Set<String> keySet() {
         Set keySet = new HashSet();
         keySet.addAll(current.keySet());
         keySet.addAll(next.keySet());
@@ -153,9 +163,10 @@ public class GrailsFlashScope implements FlashScope, org.codehaus.groovy.grails.
         return next.remove(key);
     }
 
-    public Object put(Object key, Object value) {
+    public Object put(String key, Object value) {
         // create the session if it doesn't exist
         registerWithSessionIfNecessary();
+       
         if (current.containsKey(key)) {
             current.remove(key);
         }
@@ -199,10 +210,12 @@ public class GrailsFlashScope implements FlashScope, org.codehaus.groovy.grails.
     }
 
     private void registerWithSessionIfNecessary() {
-        GrailsWebRequest webRequest = (GrailsWebRequest)RequestContextHolder.currentRequestAttributes();
-        HttpSession session = webRequest.getCurrentRequest().getSession(true);
-        if (session.getAttribute(GrailsApplicationAttributes.FLASH_SCOPE) == null) {
-            session.setAttribute(GrailsApplicationAttributes.FLASH_SCOPE, this);
+        if (registerWithSession) {
+            GrailsWebRequest webRequest = (GrailsWebRequest)RequestContextHolder.currentRequestAttributes();
+            HttpSession session = webRequest.getCurrentRequest().getSession(true);
+            if (session.getAttribute(GrailsApplicationAttributes.FLASH_SCOPE) == null) {
+                session.setAttribute(GrailsApplicationAttributes.FLASH_SCOPE, this);
+            }
         }
     }
 }

@@ -10,15 +10,19 @@ import grails.core.GrailsApplication;
 import grails.core.GrailsClass;
 import org.grails.core.artefact.TagLibArtefactHandler;
 import org.grails.support.MockApplicationContext;
-import org.codehaus.groovy.grails.web.metaclass.ControllerDynamicMethods;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockServletContext;
 
-public class GrailsApplicationAttributesTests extends TestCase {
+import static org.junit.jupiter.api.Assertions.*;
+
+public class GrailsApplicationAttributesTests {
 
     /*
      * Test method for 'org.grails.web.servlet.DefaultGrailsApplicationAttributes.getTemplateUri(String, ServletRequest)'
      */
+    @Test
     public void testGetTemplateUri() {
          GrailsApplicationAttributes attrs = new DefaultGrailsApplicationAttributes(new MockServletContext());
 
@@ -29,12 +33,13 @@ public class GrailsApplicationAttributesTests extends TestCase {
     /*
      * Test method for 'org.grails.web.servlet.DefaultGrailsApplicationAttributes.getViewUri(String, ServletRequest)'
      */
+    @Test
     public void testGetViewUri() throws Exception {
         GrailsApplicationAttributes attrs = new DefaultGrailsApplicationAttributes(new MockServletContext());
         GroovyClassLoader gcl = new GroovyClassLoader();
         Class<?> controllerClass = gcl.parseClass("class TestController {\n" +
-                "def "+ControllerDynamicMethods.CONTROLLER_URI_PROPERTY+" = '/test'\n" +
-                "def "+ControllerDynamicMethods.CONTROLLER_NAME_PROPERTY+" = 'test'\n" +
+                "def controllerUri = '/test'\n" +
+                "def controllerName = 'test'\n" +
                 "}");
 
         MockHttpServletRequest request = new MockHttpServletRequest();

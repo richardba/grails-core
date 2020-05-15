@@ -18,27 +18,21 @@ package grails.databinding
 import grails.databinding.converters.FormattedValueConverter
 import grails.databinding.converters.ValueConverter
 import grails.databinding.events.DataBindingListener
+import grails.databinding.initializers.ValueInitializer
 import groovy.transform.CompileStatic
 import groovy.transform.TypeCheckingMode
 import groovy.util.slurpersupport.GPathResult
+import org.grails.databinding.ClosureValueConverter
+import org.grails.databinding.ClosureValueInitializer
+import org.grails.databinding.IndexedPropertyReferenceDescriptor
+import org.grails.databinding.converters.*
+import org.grails.databinding.errors.SimpleBindingError
+import org.grails.databinding.xml.GPathResultMap
 
 import java.lang.annotation.Annotation
 import java.lang.reflect.Array
 import java.lang.reflect.Field
 import java.lang.reflect.ParameterizedType
-
-import grails.databinding.BindUsing
-import org.grails.databinding.BindUsing as LegacyBindUsing
-import org.grails.databinding.BindingFormat as LegacyBindingFormat
-import org.grails.databinding.ClosureValueConverter
-import org.grails.databinding.IndexedPropertyReferenceDescriptor
-import org.grails.databinding.converters.ConversionService
-import org.grails.databinding.converters.FormattedDateValueConverter
-import org.grails.databinding.converters.StructuredCalendarBindingEditor
-import org.grails.databinding.converters.StructuredDateBindingEditor
-import org.grails.databinding.converters.StructuredSqlDateBindingEditor
-import org.grails.databinding.errors.SimpleBindingError
-import org.grails.databinding.xml.GPathResultMap
 
 /**
  * A data binder that will bind nested Maps to an object.
@@ -291,11 +285,35 @@ class SimpleDataBinder implements DataBinder {
         bindProperty obj, source, metaProperty, val, listener, errors
     }
 
+    protected SimpleMapDataBindingSource splitIndexedStruct(IndexedPropertyReferenceDescriptor indexedPropertyReferenceDescriptor, DataBindingSource source) {
+        def propName = indexedPropertyReferenceDescriptor.propertyName
+        Map structValues = new HashMap()
+        String prefix = indexedPropertyReferenceDescriptor.toString()
+        for (String propertyName: source.propertyNames) {
+            if (propertyName.startsWith(prefix)) {
+                String deIndexedPropertyName = propName
+                String[] parts = propertyName.split('_')
+                if (parts.length > 1) {
+                    deIndexedPropertyName = deIndexedPropertyName + '_' + parts[1]
+                }
+                structValues.put(deIndexedPropertyName, source.getPropertyValue(propertyName))
+            }
+        }
+        new SimpleMapDataBindingSource(structValues)
+    }
+
     protected processIndexedProperty(obj, MetaProperty metaProperty, IndexedPropertyReferenceDescriptor indexedPropertyReferenceDescriptor,
         val, DataBindingSource source, DataBindingListener listener, errors) {
 
         def propName = indexedPropertyReferenceDescriptor.propertyName
         def propertyType = metaProperty.type
+        Class genericType = getReferencedTypeForCollection(propName, obj)
+
+        if (structuredEditors.containsKey(genericType) && ('struct' == val || 'date.struct' == val)) {
+            def structuredEditor = structuredEditors[genericType]
+            val = structuredEditor.getPropertyValue obj, propName, splitIndexedStruct(indexedPropertyReferenceDescriptor, source)
+        }
+
         if (propertyType.isArray()) {
             def index = Integer.parseInt(indexedPropertyReferenceDescriptor.index)
             def array = initializeArray(obj, propName, propertyType.componentType, index)
@@ -310,7 +328,6 @@ class SimpleDataBinder implements DataBinder {
                 indexedInstance = collectionInstance[index]
             }
             if (indexedInstance == null) {
-                Class genericType = getReferencedTypeForCollection(propName, obj)
                 if (genericType) {
                     if (genericType.isAssignableFrom(val?.getClass())) {
                         addElementToCollectionAt obj, propName, collectionInstance, index, val
@@ -327,6 +344,8 @@ class SimpleDataBinder implements DataBinder {
                     } else if(genericType.isEnum() && val instanceof CharSequence) {
                         def enumValue = convertStringToEnum(genericType, val.toString())
                         addElementToCollectionAt obj, propName, collectionInstance, index, enumValue
+                    } else {
+                        addElementToCollectionAt obj, propName, collectionInstance, index, convert(genericType, val)
                     }
                 } else {
                     addElementToCollectionAt obj, propName, collectionInstance, index, val
@@ -453,6 +472,8 @@ class SimpleDataBinder implements DataBinder {
             val = []
         } else if (SortedSet.isAssignableFrom(type)) {
             val = new TreeSet()
+        } else if (LinkedHashSet.isAssignableFrom(type)) {
+            val = new LinkedHashSet()
         } else if (Collection.isAssignableFrom(type)) {
             val = new HashSet()
         }
@@ -501,7 +522,7 @@ class SimpleDataBinder implements DataBinder {
         try {
             def field = getField(obj.getClass(), propName)
             if (field) {
-                def annotation = field.getAnnotation(BindUsing) ?: field.getAnnotation(LegacyBindUsing)
+                def annotation = field.getAnnotation(BindUsing)
                 if (annotation) {
                     def valueClass = getValueOfBindUsing(annotation)
                     if (Closure.isAssignableFrom(valueClass)) {
@@ -509,7 +530,7 @@ class SimpleDataBinder implements DataBinder {
                         converter = new ClosureValueConverter(converterClosure: closure.curry(obj), targetType: field.type)
                     }
                 } else {
-                    annotation = field.getAnnotation(BindingFormat) ?: field.getAnnotation(LegacyBindingFormat)
+                    annotation = field.getAnnotation(BindingFormat)
                     if (annotation) {
                         converter = getFormattedConverter field, getFormatString(annotation)
                     }
@@ -525,12 +546,10 @@ class SimpleDataBinder implements DataBinder {
      * @return the value Class of the annotation
      */
     protected Class getValueOfBindUsing(Annotation annotation) {
-        assert annotation instanceof BindUsing || annotation instanceof LegacyBindUsing
+        assert annotation instanceof BindUsing
         def value
         if(annotation instanceof BindUsing) {
             value = ((BindUsing)annotation).value()
-        } else {
-            value = ((LegacyBindUsing)annotation).value()
         }
         value
     }
@@ -540,12 +559,10 @@ class SimpleDataBinder implements DataBinder {
      * @return the value String of the annotation
      */
     protected String getFormatString(Annotation annotation) {
-        assert annotation instanceof BindingFormat || annotation instanceof LegacyBindingFormat
+        assert annotation instanceof BindingFormat
         String formatString
         if(annotation instanceof BindingFormat) {
             formatString = ((BindingFormat)annotation).value()
-        } else {
-            formatString = ((LegacyBindingFormat)annotation).value()
         }
         formatString
     }
@@ -553,7 +570,7 @@ class SimpleDataBinder implements DataBinder {
     protected ValueConverter getValueConverterForClass(obj, String propName) {
         def converter
         def objClass = obj.getClass()
-        def annotation = objClass.getAnnotation(BindUsing) ?: objClass.getAnnotation(LegacyBindUsing)
+        def annotation = objClass.getAnnotation(BindUsing)
         if (annotation) {
             def valueClass = getValueOfBindUsing(annotation)
             if (BindingHelper.isAssignableFrom(valueClass)) {
@@ -652,6 +669,8 @@ class SimpleDataBinder implements DataBinder {
                 }
             } else if(Collection.isAssignableFrom(propertyType) && propertyValue instanceof String) {
                 addElementToCollection obj, propName, propertyType, propertyValue, true
+            } else if(Collection.isAssignableFrom(propertyType) && propertyValue instanceof Number) {
+                addElementToCollection obj, propName, propertyType, propertyValue, true
             } else if(Collection.isAssignableFrom(propertyType) && propertyValue.getClass().isArray()) {
                 addElementsToCollection obj, propName, propertyValue as Collection, true
             } else {
@@ -719,9 +738,51 @@ class SimpleDataBinder implements DataBinder {
     }
 
     protected initializeProperty(obj, String propName, Class propertyType, DataBindingSource source) {
-        obj[propName] = propertyType.newInstance()
+        def initializer = getPropertyInitializer(obj,propName)
+        if(initializer){
+            obj[propName] = initializer.initialize()
+        }
+        else{
+            obj[propName] = propertyType.newInstance()
+        }        
+    }
+    
+    protected ValueInitializer getPropertyInitializer(obj, String propName){
+        def initializer = getValueInitializerForField obj, propName
+        initializer
     }
 
+    protected ValueInitializer getValueInitializerForField(obj, String propName) {
+        def initializer
+        try {
+            def field = getField(obj.getClass(), propName)
+            if (field) {
+                def annotation = field.getAnnotation(BindInitializer)
+                if (annotation) {
+                    def valueClass = getValueOfBindInitializer(annotation)
+                    if (Closure.isAssignableFrom(valueClass)) {
+                        Closure closure = (Closure)valueClass.newInstance(null, null)
+                        initializer = new ClosureValueInitializer(initializerClosure: closure.curry(obj), targetType: field.type)
+                    }
+                }
+            }
+        } catch (Exception e) {
+        }
+        initializer
+    }
+    /**
+     * @param annotation An instance of grails.databinding.BindInitializer 
+     * @return the value Class of the annotation
+     */
+    protected Class getValueOfBindInitializer(Annotation annotation) {
+        assert annotation instanceof BindInitializer
+        def value
+        if(annotation instanceof BindInitializer) {
+            value = ((BindInitializer)annotation).value()
+        }
+        value
+    }
+    
     protected convert(Class typeToConvertTo, value) {
         if (value == null || typeToConvertTo.isAssignableFrom(value?.getClass())) {
             return value
