@@ -19,7 +19,7 @@ else
     echo "Done."
 fi
 
-if [ "${TRAVIS_JDK_VERSION}" == "openjdk11" ] ; then
+if [[ "${TRAVIS_JDK_VERSION}" == "openjdk11" || "${TRAVIS_JDK_VERSION}" == "openjdk14" ]] ; then
   exit $EXIT_STATUS
 fi
 
@@ -53,7 +53,7 @@ if [[ $EXIT_STATUS -eq 0 ]]; then
        #                      version=${version:1}
        #                      majorVersion=${version:0:4}
        #                      majorVersion="${majorVersion}x"
-                git clone https://${GH_TOKEN}@github.com/grails/grails-doc.git -b master grails-doc --single-branch > /dev/null
+          git clone https://${GH_TOKEN}@github.com/grails/grails-doc.git -b master grails-doc --single-branch > /dev/null
 			    cd grails-doc
 
 			    echo "grails.version=${TRAVIS_TAG:1}" > gradle.properties

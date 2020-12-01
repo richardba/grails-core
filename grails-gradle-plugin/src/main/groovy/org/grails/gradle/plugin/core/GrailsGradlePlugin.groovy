@@ -99,6 +99,8 @@ class GrailsGradlePlugin extends GroovyPlugin {
 
         configureGroovy(project)
 
+        configureMicronaut(project)
+
         registerToolingModelBuilder(project, registry)
 
         registerGrailsExtension(project)
@@ -210,6 +212,23 @@ class GrailsGradlePlugin extends GroovyPlugin {
         project.afterEvaluate {
             TaskContainer tasks = project.tasks
             tasks.findByName("processResources")?.dependsOn(buildPropertiesTask)
+        }
+    }
+
+    @CompileStatic
+    protected void configureMicronaut(Project project) {
+        final String micronautVersion = project.properties['micronautVersion']
+        if (micronautVersion) {
+            project.configurations.all({ Configuration configuration ->
+                configuration.resolutionStrategy.eachDependency({ DependencyResolveDetails details ->
+                    String dependencyName = details.requested.name
+                    String group = details.requested.group
+                    if (group == 'io.micronaut' && dependencyName.startsWith('micronaut')) {
+                        details.useVersion(micronautVersion)
+                        return
+                    }
+                } as Action<DependencyResolveDetails>)
+            } as Action<Configuration>)
         }
     }
 
@@ -332,7 +351,7 @@ class GrailsGradlePlugin extends GroovyPlugin {
         def grailsVersion = project.property('grailsVersion')
 
         if (!grailsVersion) {
-            def grailsCoreDep = project.configurations.getByName('compile').dependencies.find { Dependency d -> d.name == 'grails-core' }
+            def grailsCoreDep = project.configurations.getByName('compileClasspath').dependencies.find { Dependency d -> d.name == 'grails-core' }
             grailsVersion = grailsCoreDep.version
         }
         grailsVersion
@@ -581,7 +600,7 @@ class GrailsGradlePlugin extends GroovyPlugin {
     protected void configurePathingJar(Project project) {
         project.afterEvaluate {
             ConfigurationContainer configurations = project.configurations
-            Configuration runtime = configurations.getByName('runtime')
+            Configuration runtime = configurations.getByName('runtimeClasspath')
             Configuration developmentOnly = configurations.findByName('developmentOnly')
             Configuration console = configurations.getByName('console')
             SourceSet mainSourceSet = SourceSets.findMainSourceSet(project)

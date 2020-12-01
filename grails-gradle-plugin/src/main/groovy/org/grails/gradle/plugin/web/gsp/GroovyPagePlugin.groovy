@@ -14,6 +14,8 @@ import org.gradle.api.tasks.bundling.War
 import org.gradle.api.tasks.compile.GroovyCompile
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.grails.gradle.plugin.util.SourceSets
+import org.grails.gradle.plugin.core.GrailsExtension
+import org.apache.tools.ant.taskdefs.condition.Os
 
 /**
  * A plugin that adds support for compiling Groovy Server Pages (GSP)
@@ -43,24 +45,41 @@ class GroovyPagePlugin implements Plugin<Project> {
         File destDir = output?.dir("gsp-classes") ?: new File(project.buildDir, "gsp-classes/main")
 
         Configuration providedConfig = project.configurations.findByName('provided')
-        def allClasspath = project.configurations.compile + project.configurations.gspCompile + classesDirs
+        def allClasspath = project.configurations.compileClasspath + project.configurations.gspCompile + classesDirs
         if(providedConfig) {
             allClasspath += providedConfig
         }
 
         def allTasks = project.tasks
-        def compileGroovyPages = allTasks.create("compileGroovyPages", GroovyPageCompileTask) {
+        def compileGroovyPages = allTasks.create("compileGroovyPages", GroovyPageForkCompileTask) {
             destinationDir = destDir
+            tmpDir = getTmpDir(project)
             source = project.file("${project.projectDir}/grails-app/views")
             serverpath = "/WEB-INF/grails-app/views/"
-            classpath = allClasspath
         }
 
-        def compileWebappGroovyPages = allTasks.create("compileWebappGroovyPages", GroovyPageCompileTask) {
+        compileGroovyPages.setClasspath( allClasspath )
+
+        def compileWebappGroovyPages = allTasks.create("compileWebappGroovyPages", GroovyPageForkCompileTask) {
             destinationDir = destDir
             source = project.file("${project.projectDir}/src/main/webapp")
+            tmpDir = getTmpDir(project)
             serverpath = "/"
-            classpath = allClasspath
+        }
+
+        compileWebappGroovyPages.setClasspath( allClasspath )
+
+
+        project.afterEvaluate {
+            GrailsExtension grailsExt = project.extensions.getByType(GrailsExtension)
+            if (grailsExt.pathingJar && Os.isFamily(Os.FAMILY_WINDOWS)) {
+                Jar pathingJar = (Jar) allTasks.findByName('pathingJar')
+                allClasspath = project.files("${project.buildDir}/classes/groovy/main", "${project.buildDir}/resources/main", pathingJar.archivePath)
+                compileGroovyPages.dependsOn(pathingJar)
+                compileGroovyPages.setClasspath(allClasspath)
+                compileWebappGroovyPages.dependsOn(pathingJar)
+                compileWebappGroovyPages.setClasspath(allClasspath)
+            }
         }
 
 
@@ -90,6 +109,10 @@ class GroovyPagePlugin implements Plugin<Project> {
         output?.classesDirs ?: project.files(new File(project.buildDir, "classes/main"))
     }
 
+    protected File getTmpDir(Project project) {
+        def tmpdir = new File(project.buildDir as String, "gsptmp")
+        tmpdir.mkdirs()
+        return tmpdir
+    }
+
 }
-
-

@@ -5,13 +5,12 @@ buildscript {
         maven { url 'https://dl.bintray.com/vermeulen-mp/gradle-plugins' }
     }
     dependencies {
-        classpath "commons-io:commons-io:2.2"
+        classpath "commons-io:commons-io:2.7"
         classpath "com.jfrog.bintray.gradle:gradle-bintray-plugin:1.8.5"
         classpath "com.netflix.nebula:gradle-extra-configurations-plugin:2.2.0"
         classpath "com.github.adrianbk:gradle-travisci-trigger-plugin:1.0.0"
         classpath "com.bmuschko:gradle-nexus-plugin:$gradleNexusPluginVersion"
         classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:$gradleSdkVendorVersion"
-        classpath "io.github.groovylang.groovydoc:groovydoc-gradle-plugin:1.0.1"
         classpath "javax.xml.bind:jaxb-api:$jaxbVersion"
         classpath "com.sun.xml.bind:jaxb-impl:$jaxbVersion"
         classpath "org.codehaus.groovy.modules.http-builder:http-builder:0.7.2"
@@ -27,8 +26,8 @@ ext {
     bintrayPublish = false
     // Sets release version
     grailsVersion = '4.1.0.BUILD-SNAPSHOT'
-    // grailsVersion = '4.1.0.M1'
-    groovyVersion = System.getenv('CI_GROOVY_VERSION') ?: "3.0.3"
+//    grailsVersion = '4.1.0.M3'
+    groovyVersion = System.getenv('CI_GROOVY_VERSION') ?: "3.0.5"
     isBuildSnapshot = grailsVersion.endsWith(".BUILD-SNAPSHOT")
     isTravisBuild = System.getenv().get("TRAVIS") == 'true'
     springLoadedCommonOptions = "-Xverify:none -Dspringloaded.synchronize=true -Djdk.reflect.allowGetCallerClass=true"
@@ -36,14 +35,14 @@ ext {
         'javax.annotation-api': [
                 version: javaxAnnotationApiVersion,
                 group:'javax.annotation',
-                name:'javax.annotation',
+                names:['javax.annotation'],
                 modules:['api']
         ],
         'micronaut': [
                 version: micronautVersion,
                 group:'io.micronaut',
                 names:['micronaut'],
-                modules:['spring','inject','runtime', 'inject-groovy', 'inject-java', 'core', 'http-client', 'http', 'buffer-netty', 'http-netty']
+                modules:['inject','runtime', 'inject-groovy', 'inject-java', 'core', 'http-client', 'http', 'buffer-netty', 'http-netty']
         ],
         'micronaut.micronaut-runtime-groovy': [
                 version: micronautRuntimeGroovyVersion,
@@ -55,7 +54,7 @@ ext {
                 version: micronautSpringVersion,
                 group:'io.micronaut.spring',
                 names:['micronaut-spring'],
-                modules:['context','boot', 'web', 'boot-annotation', 'annotation', 'web-annotation']
+                modules:['spring', 'context','boot', 'web', 'boot-annotation', 'annotation', 'web-annotation']
         ],
         gorm: [
             version: datastoreVersion,
@@ -66,7 +65,8 @@ ext {
         'gorm.hibernate': [
             version: hibernateDatastoreVersion,
             group  : 'org.grails',
-            names  : ['grails-datastore-gorm-hibernate5']
+            names  : ['grails-datastore-gorm-hibernate5'],
+            modules: ['']
         ],
         'scaffolding-core': [
                 version: scaffoldingCoreVersion,
@@ -128,6 +128,12 @@ ext {
             names  : ['grails-testing-support', 'grails-gorm-testing-support', 'grails-web-testing-support'],
             modules: ['']
         ],
+        'views-json-testing-support': [
+            version: viewsVersion,
+            group  : 'org.grails',
+            names  : ['views-json-testing-support'],
+            modules: ['']
+        ],
         h2: [
             version: h2Version,
             group  : 'com.h2database',
@@ -182,6 +188,7 @@ allprojects {
     repositories {
         mavenLocal()
         maven { url "https://repo.grails.org/grails/core" }
+        maven { url "https://oss.jfrog.org/oss-snapshot-local" }
         maven { url "https://oss.sonatype.org/content/repositories/snapshots/" }
         if(groovyVersion.endsWith('-SNAPSHOT')) {
             maven {
@@ -284,8 +291,8 @@ subprojects { project ->
         project.ext.artifactoryPublishPassword = System.getenv("ARTIFACTORY_PASSWORD")
     }
 
+    apply plugin: 'java-library'
     apply plugin: 'groovy'
-    apply plugin: "io.github.groovylang.groovydoc"
     if(!isTestSuite) {
         apply plugin: 'com.bmuschko.nexus'
         apply plugin: 'maven-publish'
@@ -427,11 +434,10 @@ subprojects { project ->
     }
 
     configure([groovydoc]) {
-        onlyIf {
+        onlyIf({
             !isTestSuite
-        }
+        })
         classpath += configurations.documentation
-        jvmArgs "-Xmx512M"
     }
 
     configure([javadoc]) {
@@ -451,24 +457,24 @@ subprojects { project ->
         documentation "org.codehaus.groovy:groovy-cli-picocli:$groovyVersion"
         documentation ("com.github.javaparser:javaparser-core:$javaParserCoreVersion")
 
-        compile groovyDependency
+        api groovyDependency
 
-        testCompile "org.codehaus.groovy:groovy-test-junit5:${groovyVersion}"
-        testCompile "org.junit.jupiter:junit-jupiter-api:5.6.2"
-        testCompile "org.junit.platform:junit-platform-runner:1.6.2"
+        testImplementation "org.codehaus.groovy:groovy-test-junit5:${groovyVersion}"
+        testImplementation "org.junit.jupiter:junit-jupiter-api:5.6.2"
+        testImplementation "org.junit.platform:junit-platform-runner:1.6.2"
         testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.6.2"
 
         if (project.name != "grails-docs") {
             // Logging
-            compile "org.slf4j:slf4j-api:$slf4jVersion"
-            compile "org.slf4j:jcl-over-slf4j:$slf4jVersion"
+            api "org.slf4j:slf4j-api:$slf4jVersion"
+            api "org.slf4j:jcl-over-slf4j:$slf4jVersion"
 
             // Testing
-            testCompile "org.slf4j:slf4j-simple:$slf4jVersion"
-            testCompile("org.spockframework:spock-core:${spockVersion}") { transitive = false }
+            testImplementation "org.slf4j:slf4j-simple:$slf4jVersion"
+            testImplementation("org.spockframework:spock-core:${spockVersion}") { transitive = false }
             // Required by Spock's Mocking
-            testCompile "cglib:cglib-nodep:${cglibVersion}"
-            testCompile "org.objenesis:objenesis:${objenesisVersion}"
+            testImplementation "cglib:cglib-nodep:${cglibVersion}"
+            testImplementation "org.objenesis:objenesis:${objenesisVersion}"
         }
     }
 
@@ -605,7 +611,7 @@ task buildscriptDependencies(type: org.gradle.api.tasks.diagnostics.DependencyRe
     configurations = project.buildscript.configurations
 }
 
-[Javadoc, Groovydoc, org.groovy.lang.groovydoc.tasks.GroovydocTask].each {
+[Javadoc, Groovydoc].each {
     tasks.withType(it).all {
         // exclude problematic jar file from javadoc classpath
         // http://www.adam-bien.com/roller/abien/entry/trouble_with_crippled_java_ee
